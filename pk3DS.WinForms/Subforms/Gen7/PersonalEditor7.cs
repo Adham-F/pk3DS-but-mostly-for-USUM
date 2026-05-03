@@ -18,6 +18,9 @@ public partial class PersonalEditor7 : Form
 {
     private int[][] vanillaStats;
     
+    public byte[][] Learnsets => learnsets;
+    public byte[][] EggMoves => eggmoves;
+    public byte[][] EvolutionFiles => evolutionFiles;
     private byte[][] learnsets;
     private byte[][] eggmoves;
     private byte[][] evolutionFiles;
@@ -39,17 +42,7 @@ public partial class PersonalEditor7 : Form
         ];
         ev_boxes = [TB_HPEVs, TB_ATKEVs, TB_DEFEVs, TB_SPEEVs, TB_SPAEVs, TB_SPDEVs];
         rstat_boxes = [CHK_rHP, CHK_rATK, CHK_rDEF, CHK_rSPA, CHK_rSPD, CHK_rSPE];
-        // Handle Master Table (common in Gen 7 Personal GARCs)
-        if (infiles.Length > 1 && infiles[^1].Length > infiles[0].Length)
-        {
-            // The last file is a master table (concatenation of all others)
-            // Strip it so it doesn't get resorted into species data
-            files = infiles.Take(infiles.Length - 1).ToArray();
-        }
-        else
-        {
-            files = infiles;
-        }
+        files = (byte[][])infiles.Clone();
         originalFiles = files.Select(a => (byte[])a.Clone()).ToArray(); // Snapshots YOUR custom ROM data
         
         foreach (var tb in byte_boxes) tb.TextAlign = HorizontalAlignment.Center;
@@ -107,9 +100,30 @@ public partial class PersonalEditor7 : Form
                 GenerateFullChangelog();
             }
         };
+        CB_ZItem.SelectedIndexChanged += (s, e) => { if (!reading) SaveEntry(); };
+        CB_ZBaseMove.SelectedIndexChanged += (s, e) => { if (!reading) SaveEntry(); };
+        CB_ZMove.SelectedIndexChanged += (s, e) => { if (!reading) SaveEntry(); };
+        B_SaveCurrent.Click += (s, e) => { SaveEntry(); WinFormsUtil.Alert("Current Pokémon saved to internal buffer."); };
+
+        this.FormClosing += Form_Closing;
+        RegisterAutosave(TP_General.Controls);
+        RegisterAutosave(TP_MoveTutors.Controls);
+    }
+
+    private void RegisterAutosave(Control.ControlCollection controls)
+    {
+        foreach (Control c in controls)
+        {
+            if (c is ComboBox cb) cb.SelectedIndexChanged += (s, e) => { if (!reading) SaveEntry(false); };
+            else if (c is CheckBox chk) chk.CheckedChanged += (s, e) => { if (!reading) SaveEntry(false); };
+            else if (c is NumericUpDown nud) nud.ValueChanged += (s, e) => { if (!reading) SaveEntry(false); };
+            
+            if (c.HasChildren) RegisterAutosave(c.Controls);
+        }
     }
     // Removed redundant handler
     #region Global Variables
+    public byte[][] Files => files;
     private byte[][] files;
 
     private readonly string[] items = Main.Config.GetText(TextName.ItemNames);
@@ -135,16 +149,27 @@ public partial class PersonalEditor7 : Form
     ];
     private readonly ushort[] tutormoves = [520, 519, 518, 338, 307, 308, 434, 620];
 
-    internal static int[] Tutors_USUM =
+    internal static readonly int[] Tutors_USUM =
     [
         450, 343, 162, 530, 324, 442, 402, 529, 340, 067, 441, 253, 009, 007, 008,
-        277, 335, 414, 492, 356, 393, 334, 387, 276, 527, 196, 401,      428, 406, 304, 231,
-        020, 173, 282, 235, 257, 272, 215, 366, 143, 220, 202, 409,      264, 351, 352,
-        380, 388, 180, 495, 270, 271, 478, 472, 283, 200, 278, 289, 446,      285,
-
+        277, 335, 414, 492, 356, 393, 334, 387, 276, 527, 196, 401, 428, 406, 304, 231,
+        020, 173, 282, 235, 257, 272, 215, 366, 143, 220, 202, 409, 264, 351, 352,
+        380, 388, 180, 495, 270, 271, 478, 472, 283, 200, 278, 289, 446, 285,
         477, 502, 432, 710, 707, 675, 673,
     ];
-    internal static int[] Tutors_USUM_Lengths = [15, 16, 15, 14, 7]; // Default lengths
+
+    // Canonical USUM Vanilla Bit Order (Bits 0-66) - Matches Legacy pk3DS Mapping
+    private static readonly int[] Tutors_USUM_Vanilla_Bits =
+    [
+        450, 343, 162, 530, 324, 442, 402, 529, 340, 067, 441, 253, 009, 007, 008, // 0-14
+        277, 335, 414, 492, 356, 393, 334, 387, 276, 527, 196, 401, 428, 406, 304, 231, // 15-30
+        020, 173, 282, 235, 257, 272, 215, 366, 143, 220, 202, 409, 264, 351, 352, // 31-45
+        380, 388, 180, 495, 270, 271, 478, 472, 283, 200, 278, 289, 446, 285, // 46-59
+        477, 502, 432, 710, 707, 675, 673 // 60-66
+    ];
+
+
+    private int[] Tutors_USUM_Lengths = [15, 16, 15, 14, 7];
 
     private int[] baseForms, formVal;
     private string[] entryNames;
@@ -155,6 +180,9 @@ public partial class PersonalEditor7 : Form
     private static bool[] ClipboardBeachTutors;
     private readonly byte[][] originalFiles;
     #endregion
+    private bool reading;
+    private int[] Tutors_Beach_Map; // Mapping from UI index to actual bit index
+    private int[] Tutors_New_Map;   // Mapping from New Tutors UI index to CRO bit index
     private void Setup()
     {
         CLB_TM.Items.Clear();
@@ -236,12 +264,42 @@ public partial class PersonalEditor7 : Form
         {
             string croPath = Path.Combine(Main.RomFSPath, "Shop.cro");
             var tutorData = TutorEditor7.GetUSUMTutorData(croPath, Tutors_USUM);
-            Tutors_USUM = tutorData.moves;
-            Tutors_USUM_Lengths = tutorData.lengths;
+            
+            // 1. Beach Tutors (Map UI items to their correct vanilla bits)
+            CLB_BeachTutors.Items.Clear();
+            List<int> beachMap = [];
+            for (int i = 0; i < Tutors_USUM.Length; i++)
+            {
+                int moveID = Tutors_USUM[i];
+                CLB_BeachTutors.Items.Add($"[{moveID:000}] {(moveID < moves.Length ? moves[moveID] : $"Move {moveID}")}");
+                
+                // Use the vanilla bit index if found, otherwise its slot in CRO
+                int bitIdx = Array.IndexOf(Tutors_USUM_Vanilla_Bits, moveID);
+                if (bitIdx == -1) bitIdx = Array.IndexOf(tutorData.moves, moveID);
+                beachMap.Add(bitIdx);
+            }
+            Tutors_Beach_Map = beachMap.ToArray();
 
-            foreach (var tutor in Tutors_USUM)
-                CLB_BeachTutors.Items.Add(moves[tutor]);
+            // 2. New Tutors (Moves in CRO not in the predefined Vanilla list)
+            CLB_NewTutors.Items.Clear();
+            List<int> newMap = [];
+            var vanillaSet = new HashSet<int>(Tutors_USUM);
+            for (int i = 0; i < tutorData.moves.Length; i++)
+            {
+                int moveID = tutorData.moves[i];
+                if (!vanillaSet.Contains(moveID))
+                {
+                    CLB_NewTutors.Items.Add($"[{moveID:000}] {(moveID < moves.Length ? moves[moveID] : $"Move {moveID}")}");
+                    newMap.Add(i);
+                }
+            }
+            Tutors_New_Map = newMap.ToArray();
         }
+
+        CLB_BeachTutors.ItemCheck += (s, e) => { if (!reading) BeginInvoke(new Action(() => SaveEntry(false))); };
+        CLB_NewTutors.ItemCheck += (s, e) => { if (!reading) BeginInvoke(new Action(() => SaveEntry(false))); };
+        CLB_MoveTutors.ItemCheck += (s, e) => { if (!reading) BeginInvoke(new Action(() => SaveEntry(false))); };
+        CLB_TM.ItemCheck += (s, e) => { if (!reading) BeginInvoke(new Action(() => SaveEntry(false))); };
 
         // toggle usum content
         CHK_BeachTutors.Checked = CHK_BeachTutors.Visible =
@@ -511,6 +569,7 @@ public partial class PersonalEditor7 : Form
 
     private void ReadInfo()
     {
+        reading = true;
         pkm = Main.SpeciesStat[entry];
 
         TB_BaseHP.Text = pkm.HP.ToString("000");
@@ -577,21 +636,40 @@ public partial class PersonalEditor7 : Form
             CB_ZMove.SelectedIndex = sm.SpecialZ_ZMove == 65535 || sm.SpecialZ_ZMove >= CB_ZMove.Items.Count ? 0 : sm.SpecialZ_ZMove;
             CHK_Variant.Checked = sm.LocalVariant;
         }
-        var special = pkm.SpecialTutors;
-        int currentIdx = 0;
-        for (int loc = 0; loc < 4 && loc < special.Length; loc++)
+        var special = pkm.SpecialTutors.SelectMany(b => b).ToArray();
+        for (int i = 0; i < CLB_BeachTutors.Items.Count; i++)
         {
-            if (Tutors_USUM_Lengths == null || loc >= Tutors_USUM_Lengths.Length) break;
-            int count = Tutors_USUM_Lengths[loc];
-            for (int b = 0; b < count && b < special[loc].Length; b++)
+            int moveID = Tutors_USUM[i];
+            
+            // Check all vanilla bits that correspond to this move ID
+            bool isChecked = false;
+            for (int bitIdx = 0; bitIdx < Tutors_USUM_Vanilla_Bits.Length; bitIdx++)
             {
-                if (currentIdx < CLB_BeachTutors.Items.Count)
+                if (Tutors_USUM_Vanilla_Bits[bitIdx] == moveID && bitIdx < special.Length)
                 {
-                    CLB_BeachTutors.SetItemChecked(currentIdx, special[loc][b]);
-                    currentIdx++;
+                    if (special[bitIdx]) { isChecked = true; break; }
                 }
             }
+            
+            // If not found in vanilla, check the 'New Tutors' map/slots
+            if (!isChecked && Tutors_Beach_Map != null && i < Tutors_Beach_Map.Length)
+            {
+                int bitIdx = Tutors_Beach_Map[i];
+                if (bitIdx >= 67 && bitIdx < special.Length) isChecked = special[bitIdx];
+            }
+
+            CLB_BeachTutors.SetItemChecked(i, isChecked);
         }
+
+        if (Tutors_New_Map != null)
+        {
+            for (int i = 0; i < CLB_NewTutors.Items.Count && i < Tutors_New_Map.Length; i++)
+            {
+                int bitIdx = Tutors_New_Map[i];
+                if (bitIdx < special.Length) CLB_NewTutors.SetItemChecked(i, special[bitIdx]);
+            }
+        }
+        reading = false;
 
         // Read Dex Entry
         var dexBox = RTB_DexEntry;
@@ -694,22 +772,40 @@ public partial class PersonalEditor7 : Form
             sm.SpecialZ_ZMove = CB_ZMove.SelectedIndex;
             sm.LocalVariant = CHK_Variant.Checked;
         }
-        var special = pkm.SpecialTutors;
-        int currentBIdx = 0;
-        for (int loc = 0; loc < 4 && loc < special.Length; loc++)
+        var bits = pkm.SpecialTutors.SelectMany(b => b).ToArray();
+        for (int i = 0; i < CLB_BeachTutors.Items.Count; i++)
         {
-            if (Tutors_USUM_Lengths == null || loc >= Tutors_USUM_Lengths.Length) break;
-            int count = Tutors_USUM_Lengths[loc];
-            for (int b = 0; b < count && b < special[loc].Length; b++)
+            int moveID = Tutors_USUM[i];
+            bool isChecked = CLB_BeachTutors.GetItemChecked(i);
+
+            // Set ALL vanilla bits that correspond to this move ID
+            for (int bitIdx = 0; bitIdx < Tutors_USUM_Vanilla_Bits.Length; bitIdx++)
             {
-                if (currentBIdx < CLB_BeachTutors.Items.Count)
+                if (Tutors_USUM_Vanilla_Bits[bitIdx] == moveID && bitIdx < bits.Length)
                 {
-                    special[loc][b] = CLB_BeachTutors.GetItemChecked(currentBIdx);
-                    currentBIdx++;
+                    bits[bitIdx] = isChecked;
                 }
             }
+
+            // Also set the specific bit from the CRO scan if it's a 'New' or shifted move
+            if (Tutors_Beach_Map != null && i < Tutors_Beach_Map.Length)
+            {
+                int bitIdx = Tutors_Beach_Map[i];
+                if (bitIdx >= 0 && bitIdx < bits.Length) bits[bitIdx] = isChecked;
+            }
         }
-        pkm.SpecialTutors = special;
+
+        if (Tutors_New_Map != null)
+        {
+            for (int i = 0; i < CLB_NewTutors.Items.Count && i < Tutors_New_Map.Length; i++)
+            {
+                int bitIdx = Tutors_New_Map[i];
+                if (bitIdx < bits.Length) bits[bitIdx] = CLB_NewTutors.GetItemChecked(i);
+            }
+        }
+
+        for (int loc = 0; loc < 4; loc++)
+            pkm.SpecialTutors[loc] = bits.Skip(loc * 32).Take(32).ToArray();
 
         // Log significant changes
         LogChange($"Saved changes for {CB_Species.Text}");
@@ -722,13 +818,13 @@ public partial class PersonalEditor7 : Form
     }
 
 
-    private void SaveEntry()
+    private void SaveEntry(bool updateChangelog = true)
     {
         if (entry < 0 || entry >= files.Length) return;
         SavePersonal();
         byte[] edits = pkm.Write();
         files[entry] = edits;
-        GenerateFullChangelog();
+        if (updateChangelog) GenerateFullChangelog();
     }
 
     private void B_RandomizeCurrent_Click(object sender, EventArgs e)
@@ -1133,6 +1229,7 @@ public partial class PersonalEditor7 : Form
         if (ClipboardTMs == null) return;
         for (int i = 0; i < Math.Min(CLB_TM.Items.Count, ClipboardTMs.Length); i++)
             CLB_TM.SetItemChecked(i, ClipboardTMs[i]);
+        SaveEntry();
         System.Media.SystemSounds.Asterisk.Play();
     }
 

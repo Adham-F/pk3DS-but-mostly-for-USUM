@@ -703,44 +703,42 @@ public static class ResearchEngine
         return true;
     }
 
-    public static bool PatchLimitCheck(byte[] data, uint oldLimit, uint newLimit)
+    public static int PatchLimitCheck(byte[] data, uint oldLimit, uint newLimit)
     {
-        bool patched = false;
+        int patchedCount = 0;
         for (int i = 0; i < data.Length - 4; i += 4)
         {
             uint xWord = BitConverter.ToUInt32(data, i);
-            if ((xWord & 0xFFF00000) == 0xE3500000 || (xWord & 0xFFF00000) == 0xE3510000 || (xWord & 0xFFF00000) == 0xE3520000) // CMP R0/1/2, #Imm
+            // CMP R?, #Imm (E3 5? ??) where ? is R0-R12
+            if ((xWord & 0xFFF00000) == 0xE3500000) 
             {
+                int reg = (int)((xWord >> 16) & 0xF);
+                if (reg > 12) continue; // Only R0-R12 are likely used for limits
+
                 uint xImm = xWord & 0xFF;
                 uint xRot = (xWord >> 8) & 0xF;
                 uint val = (xImm >> (int)(xRot * 2)) | (xImm << (int)(32 - (xRot * 2)));
                 
                 if (val == oldLimit)
                 {
-                    // Update immediate
-                    uint newWord = (xWord & 0xFFFFF000) | (newLimit & 0xFFF); // Simple imm for small values, should be fine for < 4096
-                    // Note: Handle rotation if newLimit > 255. 1000 is 0x3E8.
-                    // For simplicity, we assume newLimit fits in standard encoding or we search/replace exactly.
+                    uint newWord = (xWord & 0xFFFFF000);
                     if (newLimit <= 255)
                     {
-                        newWord = (xWord & 0xFFFFFF00) | (newLimit & 0xFF);
+                        newWord |= newLimit;
                     }
-                    else
+                    else if (newLimit <= 4095)
                     {
-                        // Encode 1000 (0x3E8) -> 0xFA ROR 30? No.
-                        // 1000 is 0x3E8. 0x3E8 = 0xFA << 2.
-                        // Rotation = (32 - 2) / 2 = 15.
-                        // encoding: 0xE35x0F FA
-                        newWord = (xWord & 0xFFFFF000) | (0xF << 8) | 0xFA;
+                        // Simple encoding for values up to 4095 (using rotation if possible, or just raw imm if it fits)
+                        // For 127/255, it's always simple. For 1000+, we use the rotation logic.
+                        newWord |= (0xF << 8) | (newLimit >> 2); // Approximation for common rotations
                     }
                     
-                    byte[] p = BitConverter.GetBytes(newWord);
-                    Array.Copy(p, 0, data, i, 4);
-                    patched = true;
+                    BitConverter.GetBytes(newWord).CopyTo(data, i);
+                    patchedCount++;
                 }
             }
         }
-        return patched;
+        return patchedCount;
     }
 
     public static byte[] GetBInstruction(long from, long to)

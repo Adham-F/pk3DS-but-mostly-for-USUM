@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using pk3DS.Core;
 using pk3DS.Core.Modding;
 using System;
@@ -88,6 +89,14 @@ public partial class TutorEditor7 : Form
     }
 
     private readonly string[] movelist = Main.Config.GetText(TextName.MoveNames);
+    private static readonly int[] Tutors_USUM =
+    [
+        450, 343, 162, 530, 324, 442, 402, 529, 340, 067, 441, 253, 009, 007, 008, // 0-14
+        277, 335, 414, 492, 356, 393, 334, 387, 276, 527, 196, 401, 428, 406, 304, 231, // 15-30
+        020, 173, 282, 235, 257, 272, 215, 366, 143, 220, 202, 409, 264, 351, 352, // 31-45
+        380, 388, 180, 495, 270, 271, 478, 472, 283, 200, 278, 289, 446, 285, // 46-59
+        477, 502, 432, 710, 707, 675, 673 // 60-66
+    ];
 
     private readonly string[] locationsTutor =
     [
@@ -116,9 +125,20 @@ public partial class TutorEditor7 : Form
         byte[] codeBin = File.ReadAllBytes(fullCodePath);
         int offset = ProjectState.Instance.TutorCodeOffset;
 
+        // Anchor search for USUM Tutor Move Table
+        byte[] onOffSig = [0x5F, 0x6F, 0x6E, 0x5F, 0x6F, 0x66, 0x66, 0xFF];
+        int onOffIdx = Util.IndexOfBytes(codeBin, onOffSig, 0, codeBin.Length);
+        if (onOffIdx >= 0)
+        {
+            // The move ID table is usually located shortly after the _on_off string in USUM
+            // We can use this as a reference point if the length table signature fails.
+        }
+
         if (offset <= 0)
         {
-            byte[] sig = { 0x0F, 0x00, 0x11, 0x00, 0x11, 0x00, 0x0F, 0x00 };
+            byte[] sig = Main.Config.USUM 
+                ? new byte[] { 0x0F, 0x00, 0x11, 0x00, 0x0F, 0x00, 0x14, 0x00 } // USUM: 15, 17, 15, 20
+                : new byte[] { 0x0F, 0x00, 0x11, 0x00, 0x11, 0x00, 0x0F, 0x00 }; // SM: 15, 17, 17, 15
             int sigIdx = pk3DS.Core.Util.IndexOfBytes(codeBin, sig, 0x100000, 0);
             if (sigIdx >= 0)
             {
@@ -130,15 +150,60 @@ public partial class TutorEditor7 : Form
 
         if (offset > 0)
         {
-            for (int t = 0; t < 4; t++)
+            int groups = Main.Config.USUM ? 5 : 4;
+            for (int t = 0; t < groups; t++)
             {
                 int destOfs = offset + (t * 2);
-                if (destOfs + 1 < codeBin.Length)
+                if (destOfs + 1 < codeBin.Length && t < len_BPTutor.Length)
                 {
                     codeBin[destOfs] = (byte)len_BPTutor[t];
                     codeBin[destOfs + 1] = 0;
                 }
             }
+
+            // 2. Sync Move ID Table
+            // The move ID table is a list of ushorts (2 bytes each) for every tutorable move.
+            byte[] moveSig = [0xC2, 0x01, 0x57, 0x01, 0xA2, 0x00, 0x12, 0x02]; // First 4 Beach 1 moves
+            int moveTableOfs = Util.IndexOfBytes(codeBin, moveSig, 0, codeBin.Length);
+            
+            if (moveTableOfs < 0 && onOffIdx >= 0)
+            {
+                // Fallback: Search near _on_off anchor
+                // The table is usually within 0x400 bytes of _on_off
+                int searchStart = Math.Max(0, onOffIdx - 0x400);
+                int searchEnd = Math.Min(codeBin.Length, onOffIdx + 0x400);
+                moveTableOfs = Util.IndexOfBytes(codeBin, moveSig, searchStart, searchEnd - searchStart);
+                
+                if (moveTableOfs < 0)
+                {
+                    // More aggressive fallback: Search for just the first two moves
+                    byte[] shortSig = [0xC2, 0x01, 0x57, 0x01];
+                    moveTableOfs = Util.IndexOfBytes(codeBin, shortSig, searchStart, searchEnd - searchStart);
+                }
+            }
+
+            if (moveTableOfs >= 0)
+            {
+                // We found the table! Now sync all moves from the shop.
+                var tutorData = GetUSUMTutorData(CROPath, Tutors_USUM);
+                int[] shopMoves = tutorData.moves;
+                
+                for (int i = 0; i < shopMoves.Length; i++)
+                {
+                    int m_ofs = moveTableOfs + (i * 2);
+                    if (m_ofs + 2 <= codeBin.Length)
+                    {
+                        BitConverter.GetBytes((ushort)shopMoves[i]).CopyTo(codeBin, m_ofs);
+                    }
+                }
+            }
+
+            // 3. Patch hardcoded limit checks in code.bin (e.g., CMP R?, #67)
+            if (Main.Config.USUM && len_BPTutor.Sum(z => z) > 60)
+            {
+                ResearchEngine.PatchLimitCheck(codeBin, 67, 127);
+            }
+            
             File.WriteAllBytes(fullCodePath, codeBin);
         }
     }
@@ -245,6 +310,13 @@ public partial class TutorEditor7 : Form
 
         data[ofs_counts + entryBPMove] = (byte)count;
         len_BPTutor[entryBPMove] = (byte)count;
+
+        // Apply automatic expansion patch to Shop.cro if moves > 67
+        // We check if the total count exceeds vanilla limits or if any group is expanded.
+        if (len_BPTutor.Sum(z => z) > 60 || count > 15)
+        {
+            ResearchEngine.PatchLimitCheck(data, 67, 127);
+        }
     }
 
     private void B_Randomize_Click(object sender, EventArgs e)
@@ -270,14 +342,65 @@ public partial class TutorEditor7 : Form
 
     public static (int[] moves, int[] lengths) GetUSUMTutorData(string croPath, int[] defaultMoves)
     {
-        if (!File.Exists(croPath)) return (defaultMoves, [15, 17, 17, 15]);
+        int[] defaultLengths = [15, 16, 15, 14, 7];
+        if (!File.Exists(croPath)) return (defaultMoves, defaultLengths);
         byte[] d = File.ReadAllBytes(croPath);
         
-        // Use RPT to find tutor counts
+        // 1. Try to find the counts offset
         int c_ofs = ResearchEngine.GetRelocationPatchTarget(d, 0x03C);
-        if (c_ofs == -1) c_ofs = 0x52D2; // Fallback
+        if (c_ofs == -1)
+        {
+            byte[] sig_counts = [0x0F, 0x11, 0x11, 0x0F];
+            int idx_c = Util.IndexOfBytes(d, sig_counts, 0, d.Length - sig_counts.Length);
+            if (idx_c >= 0) c_ofs = idx_c;
+        }
 
-        int[] lengths = d.Skip(c_ofs).Take(4).Select(b => (int)b).ToArray();
-        return (defaultMoves, lengths);
+        // 2. Read lengths
+        int[] lengths;
+        if (c_ofs != -1)
+        {
+            lengths = d.Skip(c_ofs).Take(16).Select(b => (int)b).ToArray();
+            // Filter out 0 lengths or stop if we hit 0 after some valid ones
+            List<int> validLengths = [];
+            foreach (var l in lengths)
+            {
+                if (l > 0 && l < 64) validLengths.Add(l);
+                else if (validLengths.Count > 0) break;
+            }
+            lengths = validLengths.Count > 0 ? validLengths.ToArray() : defaultLengths;
+        }
+        else
+        {
+            lengths = defaultLengths;
+        }
+
+        // 3. Read moves
+        List<int> moves = [];
+        for (int i = 0; i < lengths.Length; i++)
+        {
+            int tutorOfs = -1;
+            if (i < TutorPatchAddrs.Length)
+                tutorOfs = ResearchEngine.GetRelocationPatchTarget(d, TutorPatchAddrs[i]);
+            
+            if (tutorOfs == -1 || tutorOfs + (lengths[i] * 4) > d.Length)
+            {
+                // Fallback to defaults for this group if we can't find it
+                int start = defaultLengths.Take(i).Sum();
+                int count = Math.Min(lengths[i], defaultMoves.Length - start);
+                if (count > 0)
+                    moves.AddRange(defaultMoves.Skip(start).Take(count).Select(z => (int)z));
+                continue;
+            }
+
+            for (int m = 0; m < lengths[i]; m++)
+            {
+                int m_ofs = tutorOfs + (m * 4);
+                int mID = BitConverter.ToUInt16(d, m_ofs);
+                if (mID > 0 && mID < 1000) moves.Add(mID);
+                else moves.Add(0); // Placeholder for corrupted entry
+            }
+        }
+
+        return (moves.Count > 0 ? moves.ToArray() : defaultMoves, lengths);
     }
 }

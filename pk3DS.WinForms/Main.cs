@@ -1316,14 +1316,17 @@ namespace pk3DS.WinForms;
                     Invoke(() => { var ed = new PersonalEditor6(d); WinFormsUtil.ApplyTheme(ed); HandleFriendship(1); ed.ShowDialog(); });
                     break;
                 case 7:
-                    Invoke(() => { var ed = new PersonalEditor7(d, l, eg, ev); WinFormsUtil.ApplyTheme(ed); HandleFriendship(1); ed.ShowDialog(); });
+                    PersonalEditor7 ped = null;
+                    Invoke(() => { ped = new PersonalEditor7(d, l, eg, ev); WinFormsUtil.ApplyTheme(ped); HandleFriendship(1); ped.ShowDialog(); });
+                    if (ped != null)
+                    {
+                        d = ped.Files;
+                        l = ped.Learnsets;
+                        eg = ped.EggMoves;
+                        ev = ped.EvolutionFiles;
+                    }
                     break;
             }
-
-            // Refresh local references after editor closes (important if forms were added)
-            d = Config.GARCPersonal.Files;
-            l = Config.GARCLearnsets.Files;
-            eg = Config.GetGARCData("eggmove").Files;
 
             // Set Master Table back (Safely resize if needed)
             if (d.Length > 1)
@@ -1352,6 +1355,14 @@ namespace pk3DS.WinForms;
             {
                 ge_new.Files = eg;
                 ge_new.Save();
+            }
+
+            var g_evo = Config.GetGARCData("evolution");
+            if (g_evo != null)
+            {
+                g_evo.Files = ev;
+                g_evo.Save();
+                Config.InitializeEvos();
             }
         }).Start();
     }

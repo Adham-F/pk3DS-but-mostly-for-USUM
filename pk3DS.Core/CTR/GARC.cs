@@ -106,7 +106,7 @@ public static class GARC
             int index = 0;
             for (int i = 0; i < garc.fatb.Entries.Length; i++)
             {
-                garc.fato.Entries[i].Offset = op; // FATO offset
+                garc.fato.Entries[i].Offset = (uint)op; // FATO offset
                 garc.fatb.Entries[i].SubEntries = new FATB_SubEntry[32];
                 op += 4; // Vector
                 if (!Directory.Exists(packOrder[i])) // is not folder
@@ -133,9 +133,9 @@ public static class GARC
                     // Assemble Entry
                     var fi = new FileInfo(packOrder[i]);
                     int actualLength = (int)(fi.Length % 4 == 0 ? fi.Length : fi.Length + 4 - (fi.Length % 4));
-                    garc.fatb.Entries[i].SubEntries[0].Start = od;
-                    garc.fatb.Entries[i].SubEntries[0].End = actualLength + garc.fatb.Entries[i].SubEntries[0].Start;
-                    garc.fatb.Entries[i].SubEntries[0].Length = (int)fi.Length;
+                    garc.fatb.Entries[i].SubEntries[0].Start = (uint)od;
+                    garc.fatb.Entries[i].SubEntries[0].End = (uint)(actualLength + garc.fatb.Entries[i].SubEntries[0].Start);
+                    garc.fatb.Entries[i].SubEntries[0].Length = (uint)fi.Length;
                     od += actualLength;
 
                     op += 12;
@@ -169,9 +169,9 @@ public static class GARC
                         // Assemble Entry
                         var fi = new FileInfo(s);
                         int actualLength = (int)(fi.Length % 4 == 0 ? fi.Length : fi.Length + 4 - (fi.Length % 4));
-                        garc.fatb.Entries[i].SubEntries[fileNumber].Start = od;
-                        garc.fatb.Entries[i].SubEntries[fileNumber].End = actualLength + garc.fatb.Entries[i].SubEntries[fileNumber].Start;
-                        garc.fatb.Entries[i].SubEntries[fileNumber].Length = (int)fi.Length;
+                        garc.fatb.Entries[i].SubEntries[fileNumber].Start = (uint)od;
+                        garc.fatb.Entries[i].SubEntries[fileNumber].End = (uint)(actualLength + garc.fatb.Entries[i].SubEntries[fileNumber].Start);
+                        garc.fatb.Entries[i].SubEntries[fileNumber].Length = (uint)fi.Length;
                         od += actualLength;
 
                         op += 12;
@@ -182,7 +182,7 @@ public static class GARC
                 }
                 garc.fatb.Entries[i].Vector = (uint)v;
             }
-            garc.fatb.HeaderSize = 0xC + op;
+            garc.fatb.HeaderSize = (uint)(0xC + op);
         }
         #endregion
 
@@ -227,17 +227,17 @@ public static class GARC
         {
             gw.Write(e.Vector);
             foreach (var s in e.SubEntries.Where(s => s.Exists))
-            { gw.Write((uint)s.Start); gw.Write((uint)s.End); gw.Write((uint)s.Length); }
+            { gw.Write(s.Start); gw.Write(s.End); gw.Write(s.Length); }
         }
 
         // Write FIMB
         gw.Write((uint)0x46494D42); // FIMB
         gw.Write((uint)0x0000000C); // Header Length
-        var dataLen = gw.BaseStream.Position;
+        var dataLen = (uint)gw.BaseStream.Position;
         gw.Write((uint)0); // Data Length - TEMP
 
         gw.Seek(0x10, SeekOrigin.Begin); // Goto the start of the un-set 0 data we set earlier and set it.
-        var hdrLen = gw.BaseStream.Position;
+        var hdrLen = (uint)gw.BaseStream.Position;
         gw.Write((uint)0); // Write Data Offset - TEMP
         gw.Write((uint)0); // Write total GARC Length - TEMP
 
@@ -369,7 +369,7 @@ public static class GARC
                 {
                     // Write out the data for the file
                     br.BaseStream.Position = SubEntry.Start + garc.DataOffset;
-                    bw.Write(br.ReadBytes(SubEntry.Length));
+                    bw.Write(br.ReadBytes((int)SubEntry.Length));
                     filectr++;
                 }
                 if (compressed)
@@ -452,11 +452,11 @@ public static class GARC
 
         garc.fato.Entries = new FATO_Entry[garc.fato.EntryCount];
         for (int i = 0; i < garc.fato.EntryCount; i++)
-            garc.fato.Entries[i].Offset = br.ReadInt32();
+            garc.fato.Entries[i].Offset = (uint)br.ReadInt32();
 
         // FATB (File Allocation Table Bits)
         garc.fatb.Magic = br.ReadChars(4);
-        garc.fatb.HeaderSize = br.ReadInt32();
+        garc.fatb.HeaderSize = (uint)br.ReadInt32();
         garc.fatb.FileCount = br.ReadInt32();
 
         garc.fatb.Entries = new FATB_Entry[garc.fato.EntryCount];
@@ -471,9 +471,9 @@ public static class GARC
                 garc.fatb.Entries[i].SubEntries[b].Exists = (bitvector & 1) == 1;
                 bitvector >>= 1;
                 if (!garc.fatb.Entries[i].SubEntries[b].Exists) continue;
-                garc.fatb.Entries[i].SubEntries[b].Start = br.ReadInt32();
-                garc.fatb.Entries[i].SubEntries[b].End = br.ReadInt32();
-                garc.fatb.Entries[i].SubEntries[b].Length = br.ReadInt32();
+                garc.fatb.Entries[i].SubEntries[b].Start = br.ReadUInt32();
+                garc.fatb.Entries[i].SubEntries[b].End = br.ReadUInt32();
+                garc.fatb.Entries[i].SubEntries[b].Length = br.ReadUInt32();
                 ctr++;
             }
             garc.fatb.Entries[i].IsFolder = ctr > 1;
@@ -481,197 +481,146 @@ public static class GARC
 
         // FIMB (File IMage Bytes)
         garc.fimg.Magic = br.ReadChars(4);
-        garc.fimg.HeaderSize = br.ReadInt32();
-        garc.fimg.DataSize = br.ReadInt32();
+        garc.fimg.HeaderSize = (uint)br.ReadInt32();
+        garc.fimg.DataSize = br.ReadUInt32();
 
         // Files data
         // Oftentimes too large to toss into a byte array. Fetch as needed with a BinaryReader.
         return garc;
     }
 
-    public static MemGARC PackGARC(byte[][] data, int version, int contentpadnearest)
+    public static void PackGARC(byte[][] data, string garcPath, int version, int contentpadnearest)
     {
-        if (contentpadnearest < 0)
-            contentpadnearest = 4;
-        // Set Up the GARC template.
+        if (contentpadnearest < 0) contentpadnearest = 4;
         var garc = new GARCFile
         {
             ContentPadToNearest = (uint)contentpadnearest,
             fato =
             {
-                // Magic = new[] { 'O', 'T', 'A', 'F' },
                 Entries = new FATO_Entry[data.Length],
-                EntryCount = (ushort) data.Length,
-                HeaderSize = 0xC + (data.Length*4),
+                EntryCount = (ushort)data.Length,
+                HeaderSize = 0xC + (data.Length * 4),
                 Padding = 0xFFFF,
             },
             fatb =
             {
-                // Magic = new[] { 'B', 'T', 'A', 'F' },
                 Entries = new FATB_Entry[data.Length],
                 FileCount = data.Length,
             },
         };
 
-        if (version == VER_6)
-            garc.ContentPadToNearest = 4;
+        if (version == VER_6) garc.ContentPadToNearest = 4;
 
-        int op = 0;
-        int od = 0;
+        uint op = 0;
+        long od = 0;
         for (int i = 0; i < garc.fatb.Entries.Length; i++)
         {
-            garc.fato.Entries[i].Offset = op; // FATO offset
+            garc.fato.Entries[i].Offset = (uint)op; // FATO offset
             garc.fatb.Entries[i].SubEntries = new FATB_SubEntry[32];
             op += 4; // Vector
             garc.fatb.Entries[i].IsFolder = false;
             garc.fatb.Entries[i].SubEntries[0].Exists = true;
 
             // Assemble Entry
-            var paddingRequired = data[i].Length % garc.ContentPadToNearest;
+            var paddingRequired = (uint)data[i].Length % garc.ContentPadToNearest;
             if (paddingRequired != 0) paddingRequired = garc.ContentPadToNearest - paddingRequired;
-            int actualLength = data[i].Length + (int)paddingRequired;
-            garc.fatb.Entries[i].SubEntries[0].Start = od;
-            garc.fatb.Entries[i].SubEntries[0].End = actualLength + garc.fatb.Entries[i].SubEntries[0].Start;
-            garc.fatb.Entries[i].SubEntries[0].Length = data[i].Length;
-            garc.fatb.Entries[i].SubEntries[0].Padding = (int)paddingRequired;
+            long actualLength = data[i].Length + paddingRequired;
+            garc.fatb.Entries[i].SubEntries[0].Start = (uint)od;
+            garc.fatb.Entries[i].SubEntries[0].End = (uint)(actualLength + od);
+            garc.fatb.Entries[i].SubEntries[0].Length = (uint)data[i].Length;
+            garc.fatb.Entries[i].SubEntries[0].Padding = (uint)paddingRequired;
             od += actualLength;
 
             op += 12;
             garc.fatb.Entries[i].Vector = 1;
         }
-        garc.fatb.HeaderSize = 0xC + op;
+        garc.fatb.HeaderSize = (uint)(0xC + op);
 
-        // Set up the Header Info
-        string tempFile = Path.GetTempFileName();
-        using (var newGARC = new FileStream(tempFile, FileMode.Create))
-        using (var gw = new BinaryWriter(newGARC))
+        using var newGARC = new FileStream(garcPath, FileMode.Create);
+        using var gw = new BinaryWriter(newGARC);
+        
+        gw.Write((uint)0x47415243);
+        gw.Write((uint)(version == VER_6 ? 0x24 : 0x1C));
+        gw.Write((ushort)0xFEFF);
+        gw.Write((ushort)version);
+        gw.Write((uint)4);
+        gw.Write((uint)0); // Data Offset (temp)
+        gw.Write((uint)0); // File Length (temp)
+        gw.Write((uint)0); // Largest File Size (temp)
+        if (version == VER_6) { gw.Write((uint)0); gw.Write((uint)0); }
+
+        gw.Write((uint)0x4641544F);
+        gw.Write(garc.fato.HeaderSize);
+        gw.Write(garc.fato.EntryCount);
+        gw.Write(garc.fato.Padding);
+        foreach (var t in garc.fato.Entries) gw.Write((uint)t.Offset);
+
+        gw.Write((uint)0x46415442);
+        gw.Write(garc.fatb.HeaderSize);
+        gw.Write(garc.fatb.FileCount);
+        foreach (var e in garc.fatb.Entries)
         {
-            #region Write GARC Headers
-
-            // Write GARC
-            gw.Write((uint)0x47415243); // GARC
-            gw.Write((uint)(version == VER_6 ? 0x24 : 0x1C)); // Header Length
-            gw.Write((ushort)0xFEFF); // Endianness BOM
-            gw.Write((ushort)version); // Version
-            gw.Write((uint)0x00000004); // Section Count (4)
-            gw.Write((uint)0x00000000); // Data Offset (temp)
-            gw.Write((uint)0x00000000); // File Length (temp)
-            gw.Write((uint)0x00000000); // Largest File Size (temp)
-
-            if (version == VER_6)
+            gw.Write(e.Vector);
+            foreach (var s in e.SubEntries.Where(s => s.Exists))
             {
-                gw.Write((uint)0x0);
-                gw.Write((uint)0x0);
-            }
-
-            // Write FATO
-            gw.Write((uint)0x4641544F); // FATO
-            gw.Write(garc.fato.HeaderSize); // Header Size 
-            gw.Write(garc.fato.EntryCount); // Entry Count
-            gw.Write(garc.fato.Padding); // Padding
-            foreach (var t in garc.fato.Entries)
-                gw.Write((uint)t.Offset);
-
-            // Write FATB
-            gw.Write((uint)0x46415442); // FATB
-            gw.Write(garc.fatb.HeaderSize); // Header Size
-            gw.Write(garc.fatb.FileCount); // File Count
-            foreach (var e in garc.fatb.Entries)
-            {
-                gw.Write(e.Vector);
-                foreach (var s in e.SubEntries.Where(s => s.Exists))
-                {
-                    gw.Write((uint)s.Start);
-                    gw.Write((uint)s.End);
-                    gw.Write((uint)s.Length);
-                }
-            }
-
-            gw.Write((uint)0x46494D42); // FIMB
-            gw.Write((uint)0x0000000C); // Header Length
-            var dataLen = gw.BaseStream.Position;
-            gw.Write((uint)0); // Data Length - TEMP
-
-            gw.Seek(0x10, SeekOrigin.Begin); // Goto the start of the un-set 0 data we set earlier and set it.
-            var hdrLen = gw.BaseStream.Position;
-            gw.Write((uint)0); // Write Data Offset - TEMP
-            gw.Write((uint)0); // Write total GARC Length - TEMP
-
-            // Write Handling information
-            if (version == VER_4)
-            {
-                gw.Write(garc.ContentLargestUnpadded); // Write Largest File stat
-            }
-            else if (version == VER_6)
-            {
-                gw.Write(garc.ContentLargestPadded); // Write Largest With Padding
-                gw.Write(garc.ContentLargestUnpadded); // Write Largest Without Padding
-                gw.Write(garc.ContentPadToNearest);
-            }
-
-            newGARC.Seek(0, SeekOrigin.End); // Goto the end so we can copy the filedata after the GARC headers.
-
-            #endregion
-
-            #region Write Files
-
-            var ghLength = gw.BaseStream.Length;
-
-            long largestSize = 0; // Required memory to allocate to handle the largest file
-            long largestPadded = 0; // Required memory to allocate to handle the largest PADDED file (Ver6 only)
-            for (int i = 0; i < data.Length; i++)
-            {
-                byte[] e = data[i];
-
-                // Update largest file length if necessary
-                int len = e.Length;
-                int padding = garc.fatb.Entries[i].SubEntries[0].Padding;
-                bool largest = len > largestSize;
-                if (largest)
-                {
-                    largestSize = len;
-                    largestPadded = len + padding;
-                }
-
-                // Write to FIMB
-                gw.Write(e);
-
-                // Pad with FF (unused byte)
-                while (padding-- > 0)
-                    gw.Write((byte)0xFF);
-            }
-            garc.ContentLargestUnpadded = (uint)largestSize;
-            garc.ContentLargestPadded = (uint)largestPadded;
-            var gdLength = gw.BaseStream.Length - ghLength;
-
-            #endregion
-
-            gw.Seek((int)dataLen, SeekOrigin.Begin);
-            gw.Write((uint)gdLength); // Data Length
-            gw.Seek((int)hdrLen, SeekOrigin.Begin);
-            gw.Write((uint)ghLength); // Write Data Offset
-            gw.Write((uint)gw.BaseStream.Length); // Write total GARC Length
-
-            if (version == VER_4)
-            {
-                gw.Write(garc.ContentLargestUnpadded); // Write Largest File stat
-            }
-            else if (version == VER_6)
-            {
-                gw.Write(garc.ContentLargestPadded); // Write Largest With Padding
-                gw.Write(garc.ContentLargestUnpadded); // Write Largest Without Padding
-                gw.Write(garc.ContentPadToNearest);
+                gw.Write(s.Start);
+                gw.Write(s.End);
+                gw.Write(s.Length);
             }
         }
 
-        byte[] GARCdata = File.ReadAllBytes(tempFile);
-        File.Delete(tempFile);
-        return new MemGARC(GARCdata);
+        gw.Write((uint)0x46494D42);
+        gw.Write((uint)0x0000000C);
+        var dataLenOfs = gw.BaseStream.Position;
+        gw.Write((uint)0); // Data Length - TEMP
+
+        gw.Seek(0x10, SeekOrigin.Begin);
+        var hdrLenOfs = gw.BaseStream.Position;
+        gw.Write((uint)0); // Data Offset - TEMP
+        gw.Write((uint)0); // Total Length - TEMP
+
+        // Write Handling info
+        if (version == VER_4) { gw.Write((uint)0); }
+        else { gw.Write((uint)0); gw.Write((uint)0); gw.Write(garc.ContentPadToNearest); }
+
+        newGARC.Seek(0, SeekOrigin.End);
+        var ghLength = newGARC.Length;
+        long largestSize = 0;
+        long largestPadded = 0;
+
+        for (int i = 0; i < data.Length; i++)
+        {
+            byte[] e = data[i];
+            int len = e.Length;
+            uint padding = garc.fatb.Entries[i].SubEntries[0].Padding;
+            if (len > largestSize) { largestSize = len; largestPadded = len + padding; }
+            gw.Write(e);
+            while (padding-- > 0) gw.Write((byte)0xFF);
+        }
+
+        var gdLength = newGARC.Length - ghLength;
+        gw.Seek((int)dataLenOfs, SeekOrigin.Begin);
+        gw.Write((uint)gdLength);
+        gw.Seek((int)hdrLenOfs, SeekOrigin.Begin);
+        gw.Write((uint)ghLength);
+        gw.Write((uint)newGARC.Length);
+
+        if (version == VER_4) gw.Write((uint)largestSize);
+        else { gw.Write((uint)largestPadded); gw.Write((uint)largestSize); gw.Write(garc.ContentPadToNearest); }
+    }
+
+    public static MemGARC PackGARC(byte[][] data, int version, int contentpadnearest)
+    {
+        string temp = Path.GetTempFileName();
+        PackGARC(data, temp, version, contentpadnearest);
+        byte[] garcData = File.ReadAllBytes(temp);
+        File.Delete(temp);
+        return new MemGARC(garcData);
     }
 
     public class MemGARC(byte[] data)
     {
-        internal GARCFile garc = UnpackGARC(data);
+        public GARCFile garc = UnpackGARC(data);
         public byte[] Data = data;
         public int FileCount => garc.fato.EntryCount;
 
@@ -855,13 +804,13 @@ public static class GARC
 
     public struct FATO_Entry
     {
-        public int Offset;
+        public uint Offset;
     }
 
     public struct FATB
     {
         public char[] Magic;
-        public int HeaderSize;
+        public uint HeaderSize;
         public int FileCount;
 
         public FATB_Entry[] Entries;
@@ -877,19 +826,19 @@ public static class GARC
     public struct FATB_SubEntry
     {
         public bool Exists;
-        public int Start;
-        public int End;
-        public int Length;
+        public uint Start;
+        public uint End;
+        public uint Length;
 
         // Unsaved Properties
-        public int Padding { get; set; }
+        public uint Padding { get; set; }
     }
 
     public struct FIMG
     {
         public char[] Magic;
-        public int HeaderSize;
-        public int DataSize;
+        public uint HeaderSize;
+        public uint DataSize;
     }
 }
 #endregion

@@ -1292,7 +1292,7 @@ namespace pk3DS.WinForms
                 if (type != "Move") {
                     byte[] cd = File.ReadAllBytes(cp); 
                     uint old = type switch { "Ability" => 234u, "Item" => 800u, _ => 0 };
-                    if (ResearchEngine.PatchLimitCheck(cd, old, (uint)lim)) File.WriteAllBytes(cp, cd);
+                    if (ResearchEngine.PatchLimitCheck(cd, old, (uint)lim) > 0) File.WriteAllBytes(cp, cd);
                     ResearchEngine.ExpandRelocationTable(bp, type, lim);
                 }
 

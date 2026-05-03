@@ -128,6 +128,8 @@ partial class PersonalEditor7
         this.TP_MoveTutors = new System.Windows.Forms.TabPage();
         this.L_BeachTutors = new System.Windows.Forms.Label();
         this.CLB_BeachTutors = new System.Windows.Forms.CheckedListBox();
+        this.L_NewTutors = new System.Windows.Forms.Label();
+        this.CLB_NewTutors = new System.Windows.Forms.CheckedListBox();
         this.L_Special = new System.Windows.Forms.Label();
         this.L_TM = new System.Windows.Forms.Label();
         this.CLB_MoveTutors = new System.Windows.Forms.CheckedListBox();
@@ -187,10 +189,10 @@ partial class PersonalEditor7
         this.B_Import = new System.Windows.Forms.Button();
         this.B_Export = new System.Windows.Forms.Button();
         this.B_RandomizeAll = new System.Windows.Forms.Button();
+        this.B_SaveCurrent = new System.Windows.Forms.Button();
 
         this.TC_Pokemon.SuspendLayout();
         this.TP_General.SuspendLayout();
-        this.TP_MoveTutors.SuspendLayout();
         this.TP_Randomizer.SuspendLayout();
         this.GB_Modifier.SuspendLayout();
         ((System.ComponentModel.ISupportInitialize)(this.NUD_CatchRateMod)).BeginInit();
@@ -740,6 +742,8 @@ partial class PersonalEditor7
         this.TP_MoveTutors.Controls.Add(this.B_CopyTMs);
         this.TP_MoveTutors.Controls.Add(this.L_BeachTutors);
         this.TP_MoveTutors.Controls.Add(this.CLB_BeachTutors);
+        this.TP_MoveTutors.Controls.Add(this.L_NewTutors);
+        this.TP_MoveTutors.Controls.Add(this.CLB_NewTutors);
         this.TP_MoveTutors.Controls.Add(this.L_Special);
         this.TP_MoveTutors.Controls.Add(this.L_TM);
         this.TP_MoveTutors.Controls.Add(this.CLB_MoveTutors);
@@ -757,7 +761,15 @@ partial class PersonalEditor7
 
         this.CLB_BeachTutors.FormattingEnabled = true;
         this.CLB_BeachTutors.Location = new System.Drawing.Point(483, 30);
-        this.CLB_BeachTutors.Size = new System.Drawing.Size(180, 335);
+        this.CLB_BeachTutors.Size = new System.Drawing.Size(180, 150);
+
+        this.L_NewTutors.AutoSize = true;
+        this.L_NewTutors.Location = new System.Drawing.Point(480, 190);
+        this.L_NewTutors.Text = "New Tutors:";
+
+        this.CLB_NewTutors.FormattingEnabled = true;
+        this.CLB_NewTutors.Location = new System.Drawing.Point(483, 210);
+        this.CLB_NewTutors.Size = new System.Drawing.Size(180, 150);
 
         this.L_Special.AutoSize = true;
         this.L_Special.Location = new System.Drawing.Point(240, 5);
@@ -817,6 +829,7 @@ partial class PersonalEditor7
         this.GB_Modifier.Controls.Add(this.CHK_FullTMCompatibility);
         this.GB_Modifier.Controls.Add(this.CHK_FullMoveTutorCompatibility);
         this.GB_Modifier.Controls.Add(this.CHK_FullBeachTutorCompatibility);
+        this.GB_Modifier.Controls.Add(this.B_SaveCurrent);
         this.GB_Modifier.Controls.Add(this.B_ModAll);
         this.GB_Modifier.Location = new System.Drawing.Point(6, 210);
         this.GB_Modifier.Size = new System.Drawing.Size(720, 220);
@@ -908,7 +921,7 @@ partial class PersonalEditor7
 
         this.CHK_rHP.Location = new System.Drawing.Point(15, 50);
         this.CHK_rHP.Text = "HP";
-        this.CHK_rHP.Size = new System.Drawing.Size(40, 17);
+        this.CHK_rHP.Size = new System.Drawing.Size(50, 17);
         this.CHK_rATK.Location = new System.Drawing.Point(70, 50);
         this.CHK_rATK.Text = "Atk";
         this.CHK_rATK.Size = new System.Drawing.Size(50, 17);
@@ -985,6 +998,15 @@ partial class PersonalEditor7
         this.B_ModAll.Location = new System.Drawing.Point(580, 25);
         this.B_ModAll.Size = new System.Drawing.Size(120, 30);
         this.B_ModAll.Text = "Modify All";
+
+        // B_SaveCurrent
+        this.B_SaveCurrent.Location = new System.Drawing.Point(555, 145);
+        this.B_SaveCurrent.Name = "B_SaveCurrent";
+        this.B_SaveCurrent.Size = new System.Drawing.Size(160, 23);
+        this.B_SaveCurrent.Text = "Save Current Pokemon";
+        this.B_SaveCurrent.BackColor = System.Drawing.Color.FromArgb(60, 100, 60);
+        this.B_SaveCurrent.ForeColor = System.Drawing.Color.White;
+        this.B_SaveCurrent.UseVisualStyleBackColor = false;
 
         // TP_Changelog
         this.TP_Changelog.Controls.Add(this.RTB_Changelog);
@@ -1092,6 +1114,7 @@ partial class PersonalEditor7
         this.Controls.Add(this.TC_Pokemon);
         this.Controls.Add(this.L_Species_Precursor);
         this.Controls.Add(this.CB_Species);
+        this.Controls.Add(this.B_SaveCurrent);
         this.Name = "PersonalEditor7";
         this.Size = new System.Drawing.Size(760, 680);
         this.Text = "Personal Stats Editor (Gen 7)";
@@ -1247,6 +1270,8 @@ partial class PersonalEditor7
     private System.Windows.Forms.Label L_ZCrystal;
     private System.Windows.Forms.Label L_BeachTutors;
     private System.Windows.Forms.CheckedListBox CLB_BeachTutors;
+    private System.Windows.Forms.Label L_NewTutors;
+    private System.Windows.Forms.CheckedListBox CLB_NewTutors;
     private System.Windows.Forms.CheckBox CHK_BeachTutors;
     private System.Windows.Forms.RichTextBox RTB_DexEntry;
     private System.Windows.Forms.CheckBox CHK_Shuffle;
@@ -1276,6 +1301,7 @@ partial class PersonalEditor7
     private System.Windows.Forms.TabPage TP_Changelog;
     private System.Windows.Forms.RichTextBox RTB_Changelog;
     private System.Windows.Forms.Button B_GenerateDiff;
+    private System.Windows.Forms.Button B_SaveCurrent;
     private System.Windows.Forms.Button B_SortForms;
     private System.Windows.Forms.Button B_InsertForm;
     private System.Windows.Forms.Button B_Import;

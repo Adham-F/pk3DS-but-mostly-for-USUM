@@ -255,6 +255,8 @@ public partial class FormInsertion : Form
         for (int i = 1; i < personal.Count; i++)
         {
             if (i == excludeSpecies) continue;
+            if (i >= insertionAt && i < insertionAt + count) continue; // Skip newly inserted forms
+
             int ptr = BitConverter.ToUInt16(personal[i], 0x1C);
             if (ptr == 0) continue;
 
@@ -294,13 +296,13 @@ public partial class FormInsertion : Form
         List<byte> headerList = new List<byte>(modelFiles[0]);
 
         // Byte 2 is total models for species, byte 0-1 is sum of all models prior
-        int total_previous_models = headerList[(species - 1) * 4 + 2] + BitConverter.ToUInt16(headerList.ToArray(), (species - 1) * 4);
+        int total_previous_models = headerList[species * 4 + 2] + BitConverter.ToUInt16(headerList.ToArray(), species * 4);
 
-        if (headerList[(species - 1) * 4 + 3] < 0x05)
-            headerList[(species - 1) * 4 + 3] += 0x04;
+        if (headerList[species * 4 + 3] < 0x05)
+            headerList[species * 4 + 3] += 0x04;
 
         int model_file_count = GetModelBinsPerForm();
-        headerList[(species - 1) * 4 + 2] += (byte)(addedCount * model_file_count);
+        headerList[species * 4 + 2] += (byte)(addedCount * model_file_count);
 
         int model_count = 0;
         for (int index = 0; index <= Main.Config.MaxSpeciesID; index++)
@@ -316,13 +318,13 @@ public partial class FormInsertion : Form
         int model_source_index;
         if (templateID <= Main.Config.MaxSpeciesID)
         {
-            model_source_index = BitConverter.ToUInt16(headerList.ToArray(), (templateID - 1) * 4);
+            model_source_index = BitConverter.ToUInt16(headerList.ToArray(), templateID * 4);
         }
         else
         {
             int baseID = baseForms[templateID];
             int fVal = formVal[templateID];
-            model_source_index = BitConverter.ToUInt16(headerList.ToArray(), (baseID - 1) * 4) + fVal;
+            model_source_index = BitConverter.ToUInt16(headerList.ToArray(), baseID * 4) + fVal;
         }
         
         int model_source_flag_offset = 2 * model_source_index + start_of_byte_flag_table;
@@ -368,8 +370,7 @@ public partial class FormInsertion : Form
             }
         }
 
-        garc.Files = newModelFiles.ToArray();
-        File.WriteAllBytes(path, garc.Data);
+        GARC.PackGARC(newModelFiles.ToArray(), path, garc.garc.Version, (int)garc.garc.ContentPadToNearest);
 
         // Heavy cleanup for 1GB+ Model GARCs
         newModelFiles.Clear();

@@ -262,8 +262,11 @@ private int PromptFormMapping(string formName)
                 }
             }
         }
-        pkm.Moves = [.. moves];
-        pkm.Levels = [.. levels];
+        var sorted = levels.Select((l, i) => new { Level = l, Move = moves[i] })
+                           .OrderBy(x => x.Level)
+                           .ToList();
+        pkm.Levels = sorted.Select(x => x.Level).ToArray();
+        pkm.Moves = sorted.Select(x => x.Move).ToArray();
         int dataIndex = entry < files.Length ? entry : baseForms[entry];
         files[dataIndex] = pkm.Write();
         GenerateFullChangelog();
@@ -392,6 +395,9 @@ private int PromptFormMapping(string formName)
         
         pkm.Levels = [.. levels];
         pkm.Moves = [.. moves];
+        
+        int dataIndex = entry < files.Length ? entry : baseForms[entry];
+        files[dataIndex] = pkm.Write();
         GetList();
     }
 
@@ -399,7 +405,6 @@ private int PromptFormMapping(string formName)
     {
         if (dgv.CurrentRow == null) return;
         int rowIdx = dgv.CurrentRow.Index;
-        int colIdx = dgv.CurrentCell.ColumnIndex;
         
         SetList(); // Commit current UI state
         if (pkm == null) return;
@@ -407,16 +412,16 @@ private int PromptFormMapping(string formName)
         var levels = pkm.Levels.ToList();
         var moves = pkm.Moves.ToList();
         
-        // Determine which move to remove (Single Column)
-        int targetIdx = rowIdx;
-        
-        if (targetIdx < levels.Count)
+        if (rowIdx < levels.Count)
         {
-            levels.RemoveAt(targetIdx);
-            moves.RemoveAt(targetIdx);
+            levels.RemoveAt(rowIdx);
+            moves.RemoveAt(rowIdx);
             
             pkm.Levels = [.. levels];
             pkm.Moves = [.. moves];
+            
+            int dataIndex = entry < files.Length ? entry : baseForms[entry];
+            files[dataIndex] = pkm.Write();
             GetList();
         }
     }

@@ -9,31 +9,30 @@ public class PersonalInfoSM : PersonalInfoXY
 
     public PersonalInfoSM(byte[] data)
     {
-        if (data.Length != SIZE)
+        Data = new byte[SIZE];
+        TMHM = new bool[128];
+        TutorFlags = new bool[160];
+        if (data == null)
             return;
-        Data = data;
+        
+        Array.Copy(data, 0, Data, 0, Math.Min(data.Length, SIZE));
 
-        // Automatically reads 16 bytes (128 bits) covering 0x28 to 0x37
+        // TM/HM: 0x28 to 0x37 (16 bytes / 128 bits)
         TMHM = GetBits(Data.Skip(0x28).Take(0x10).ToArray());
-        TypeTutors = GetBits(Data.Skip(0x38).Take(0x4).ToArray());
-        SpecialTutors =
-        [
-            GetBits(Data.Skip(0x3C).Take(0x4).ToArray()),
-            GetBits(Data.Skip(0x40).Take(0x4).ToArray()),
-            GetBits(Data.Skip(0x44).Take(0x4).ToArray()),
-            GetBits(Data.Skip(0x48).Take(0x4).ToArray()),
-        ];
+        
+        // Tutor Flags: 0x38 to 0x4B (20 bytes / 160 bits)
+        // This covers Word 28, 29, 2A, 2B, 2C.
+        byte[] tutorData = new byte[20];
+        Array.Copy(Data, 0x38, tutorData, 0, Math.Min(20, Data.Length - 0x38));
+        TutorFlags = GetBits(tutorData);
     }
+
+    public bool[] TutorFlags;
 
     public override byte[] Write()
     {
-        // Automatically writes the 128 bits back into the 16 byte space
         SetBits(TMHM).CopyTo(Data, 0x28);
-        SetBits(TypeTutors).CopyTo(Data, 0x38);
-        SetBits(SpecialTutors[0]).CopyTo(Data, 0x3C);
-        SetBits(SpecialTutors[1]).CopyTo(Data, 0x40);
-        SetBits(SpecialTutors[2]).CopyTo(Data, 0x44);
-        SetBits(SpecialTutors[3]).CopyTo(Data, 0x48);
+        SetBits(TutorFlags).CopyTo(Data, 0x38);
         return Data;
     }
 

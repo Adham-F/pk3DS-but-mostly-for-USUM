@@ -757,7 +757,7 @@ partial class PersonalEditor7
 
         this.L_BeachTutors.AutoSize = true;
         this.L_BeachTutors.Location = new System.Drawing.Point(480, 5);
-        this.L_BeachTutors.Text = "Beach Tutors:";
+        this.L_BeachTutors.Text = "Tutors:";
 
         this.CLB_BeachTutors.FormattingEnabled = true;
         this.CLB_BeachTutors.Location = new System.Drawing.Point(483, 30);

@@ -42,6 +42,20 @@ public partial class TMEditor7 : Form
         DetectExpansionStartID();
 
         SetupDGV();
+        
+        // Auto-detect TM count from code.bin once on load
+        if (File.Exists(codebin))
+        {
+            byte[] codeData = File.ReadAllBytes(codebin);
+            int detectedCount = DetectTMCount(codeData);
+            if (detectedCount > 0)
+            {
+                skipUpdate = true;
+                NUD_TMCount.Value = Math.Min(detectedCount, NUD_TMCount.Maximum);
+                skipUpdate = false;
+            }
+        }
+        
         GetList();
         TB_Offset.Text = offset.ToString("X");
 
@@ -117,17 +131,25 @@ public partial class TMEditor7 : Form
             dgvIndex.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             dgvIndex.SortMode = DataGridViewColumnSortMode.NotSortable;
         }
+        var dgvItemID = new DataGridViewTextBoxColumn();
+        {
+            dgvItemID.HeaderText = "Item ID";
+            dgvItemID.DisplayIndex = 1;
+            dgvItemID.Width = 60;
+            dgvItemID.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            dgvItemID.SortMode = DataGridViewColumnSortMode.NotSortable;
+        }
         var dgvMove = new DataGridViewComboBoxColumn();
         {
             dgvMove.HeaderText = "Move";
-            dgvMove.DisplayIndex = 1;
+            dgvMove.DisplayIndex = 2;
             dgvMove.Items.AddRange(movelist); // add only the Names
-
             dgvMove.Width = 133;
             dgvMove.FlatStyle = FlatStyle.Flat;
-            dgvIndex.SortMode = DataGridViewColumnSortMode.NotSortable;
+            dgvMove.SortMode = DataGridViewColumnSortMode.NotSortable;
         }
         dgvTM.Columns.Add(dgvIndex);
+        dgvTM.Columns.Add(dgvItemID);
         dgvTM.Columns.Add(dgvMove);
     }
 
@@ -135,20 +157,6 @@ public partial class TMEditor7 : Form
 
     private void GetList()
     {
-        // Auto-detect expansion from binary by scanning for CMP instructions
-        string codePath = codebin;
-        if (File.Exists(codePath))
-        {
-            byte[] codeData = File.ReadAllBytes(codePath);
-            int detectedCount = DetectTMCount(codeData);
-            if (detectedCount > 0 && detectedCount != (int)NUD_TMCount.Value)
-            {
-                skipUpdate = true;
-                NUD_TMCount.Value = Math.Min(detectedCount, NUD_TMCount.Maximum);
-                skipUpdate = false;
-            }
-        }
-
         dgvTM.Rows.Clear();
         tms = [];
 
@@ -166,17 +174,36 @@ public partial class TMEditor7 : Form
         for (int i = 0; i < count; i++) 
             tms.Add(BitConverter.ToUInt16(data, GetTMOffset(i)));
 
+        ushort[] defaultItems = GetDefaultTMItems();
+        ushort[] itemIDs = ResearchEngine.GetTMItemArray(data, count, defaultItems);
+
         ushort[] tmlist = [.. tms];
         for (int i = 0; i < tmlist.Length; i++)
         { 
             dgvTM.Rows.Add(); 
             dgvTM.Rows[i].Cells[0].Value = (i + 1).ToString(); 
             
+            ushort itemID = i < itemIDs.Length ? itemIDs[i] : (ushort)0;
+            dgvTM.Rows[i].Cells[1].Value = itemID.ToString();
+            // Lock vanilla item IDs (TMs 1-100 and HMs 101-107) to prevent breaking standard compatibility
+            if (i < 107) dgvTM.Rows[i].Cells[1].ReadOnly = true;
+            
             ushort moveId = tmlist[i];
             if (moveId >= movelist.Length) moveId = 0; 
             
-            dgvTM.Rows[i].Cells[1].Value = movelist[moveId]; 
+            dgvTM.Rows[i].Cells[2].Value = movelist[moveId]; 
         }
+    }
+    
+    private ushort[] GetDefaultTMItems()
+    {
+        ushort[] items = new ushort[107];
+        for (int i = 0; i < 92; i++) items[i] = (ushort)(328 + i);
+        for (int i = 0; i < 3; i++) items[92 + i] = (ushort)(618 + i);
+        for (int i = 0; i < 5; i++) items[95 + i] = (ushort)(690 + i);
+        for (int i = 0; i < 6; i++) items[100 + i] = (ushort)(420 + i);
+        items[106] = 737; // HM07
+        return items;
     }
 
     /// <summary>
@@ -186,62 +213,64 @@ public partial class TMEditor7 : Form
     /// </summary>
     private int DetectTMCount(byte[] codeData)
     {
-        // The original instruction is CMP R0, #0x64 (100) => E3 50 00 64
-        // After a TM expansion patch, this immediate is changed to the new count.
-        // We ONLY search near the TM table region to avoid matching random CMP instructions
-        // elsewhere in the binary (which was causing false positive 128-slot detection).
+        // 1. Search for our custom patch signature: push {r4, lr}; cmp r0, #LIMIT; ldrlo r4, [pc, #8]
+        byte[] customSig = [0x10, 0x40, 0x2D, 0xE9, 0x00, 0x00, 0x50, 0xE3, 0x08, 0x40, 0x9F, 0x35];
+        byte[] mask = [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         
-        // Search within a reasonable window around the TM table offset
-        int searchStart = Math.Max(0, offset - 0x2000);
-        int searchEnd = Math.Min(codeData.Length - 4, offset + 0x2000);
-        
-        // First pass: look for the exact original CMP R0, #100 (unpatched)
-        for (int i = searchStart; i < searchEnd; i += 4)
+        for (int i = 0x100000; i < codeData.Length - 12; i += 4)
         {
-            uint word = BitConverter.ToUInt32(codeData, i);
-            if (word == 0xE3500064) // CMP R0, #0x64 (exactly 100, unpatched)
-                return 100; // Original game, no expansion
+            bool match = true;
+            for (int j = 0; j < customSig.Length; j++)
+            {
+                if (mask[j] == 0xFF && codeData[i + j] != customSig[j]) { match = false; break; }
+            }
+            if (match)
+            {
+                uint word = BitConverter.ToUInt32(codeData, i + 4);
+                return (int)(word & 0xFF);
+            }
         }
-        
-        // Second pass: the CMP was patched — find the new value
-        int bestCount = 0;
-        for (int i = searchStart; i < searchEnd; i += 4)
+
+        // 2. Fallback: Search for vanilla Order->Move signature
+        byte[] vanillaSig = [0x10, 0x40, 0x2D, 0xE9, 0x6B, 0x00, 0x50, 0xE3, 0x00, 0x40, 0xA0, 0xE1];
+        int vanillaOfs = Util.IndexOfBytes(codeData, vanillaSig, 0x100000, 0);
+        if (vanillaOfs >= 0)
         {
-            uint word = BitConverter.ToUInt32(codeData, i);
-            // Match CMP R0, #imm (condition AL, opcode CMP, Rn=R0)
-            if ((word & 0xFFF00000) != 0xE3500000) continue;
-            
-            // Decode ARM rotated immediate
-            uint imm8 = word & 0xFF;
-            uint rot = (word >> 8) & 0xF;
-            uint value = rot == 0 ? imm8 : (imm8 >> (int)(rot * 2)) | (imm8 << (int)(32 - rot * 2));
-            
-            // Valid expanded TM counts: 101-128
-            if (value > 100 && value <= 128 && (int)value > bestCount)
-                bestCount = (int)value;
+            // Vanilla uses CMP R4, #0x64 at offset 0x24 (0x276444)
+            uint word = BitConverter.ToUInt32(codeData, vanillaOfs + 0x24);
+            if ((word & 0xFFFFF000) == 0xE3540000) // CMP R4, #IMM
+                return (int)(word & 0xFF);
         }
-        
-        return bestCount > 0 ? bestCount : 100;
+
+        return 100;
     }
 
     private void SetList()
     {
         tms = [];
+        List<ushort> items = [];
         for (int i = 0; i < dgvTM.Rows.Count; i++)
         {
-            var val = dgvTM.Rows[i].Cells[1].Value;
+            if (ushort.TryParse(dgvTM.Rows[i].Cells[1].Value?.ToString(), out ushort itemID))
+                items.Add(itemID);
+            else
+                items.Add(0);
+
+            var val = dgvTM.Rows[i].Cells[2].Value;
             if (val == null) tms.Add(0);
             else tms.Add((ushort)Array.IndexOf(movelist, val.ToString()));
         }
 
         ushort[] tmlist = [.. tms];
+        ushort[] itemlist = [.. items];
 
         if (!int.TryParse(TB_Offset.Text, System.Globalization.NumberStyles.HexNumber, null, out int currentOffset))
             currentOffset = offset;
 
         int count = Math.Min(tmlist.Length, (int)NUD_TMCount.Value);
-        for (int i = 0; i < count; i++) 
-            Array.Copy(BitConverter.GetBytes(tmlist[i]), 0, data, GetTMOffset(i), 2);
+        
+        // Pass the expansion to ResearchEngine which handles Assembly patching
+        ResearchEngine.ApplyExpandedTMCodePatch(data, tmlist, itemlist);
 
         // Update descriptions
         string[] itemDescriptions = Main.Config.GetText(TextName.ItemFlavor);
@@ -293,11 +322,11 @@ public partial class TMEditor7 : Form
 
         for (int i = 0; i < dgvTM.Rows.Count; i++)
         {
-            int val = Array.IndexOf(movelist, dgvTM.Rows[i].Cells[1].Value);
+            int val = Array.IndexOf(movelist, dgvTM.Rows[i].Cells[2].Value);
             if (banned.Contains(val)) continue;
             while (banned.Contains(randomMoves[ctr])) ctr++;
 
-            dgvTM.Rows[i].Cells[1].Value = movelist[randomMoves[ctr++]];
+            dgvTM.Rows[i].Cells[2].Value = movelist[randomMoves[ctr++]];
         }
         WinFormsUtil.Alert("Randomized!");
     }
@@ -344,7 +373,7 @@ public partial class TMEditor7 : Form
         var lines = new List<string>();
         for (int i = 0; i < dgvTM.Rows.Count; i++)
         {
-            string moveName = dgvTM.Rows[i].Cells[1].Value?.ToString() ?? "";
+            string moveName = dgvTM.Rows[i].Cells[2].Value?.ToString() ?? "";
             lines.Add($"TM{i + 1:00}: {moveName}");
         }
         File.WriteAllLines(sfd.FileName, lines);
@@ -381,7 +410,7 @@ public partial class TMEditor7 : Form
                 moveIdx = moveId;
             if (moveIdx < 0) continue;
 
-            dgvTM.Rows[rowIdx].Cells[1].Value = movelist[moveIdx];
+            dgvTM.Rows[rowIdx].Cells[2].Value = movelist[moveIdx];
             updated++;
         }
         WinFormsUtil.Alert($"Imported {updated} TM entries!");
@@ -398,7 +427,7 @@ public partial class TMEditor7 : Form
         // Build current TM list from the grid
         List<ushort> currentTMs = [];
         for (int i = 0; i < dgvTM.Rows.Count; i++)
-            currentTMs.Add((ushort)Array.IndexOf(movelist, dgvTM.Rows[i].Cells[1].Value));
+            currentTMs.Add((ushort)Array.IndexOf(movelist, dgvTM.Rows[i].Cells[2].Value));
 
         ushort[] tmlist = [.. currentTMs];
 

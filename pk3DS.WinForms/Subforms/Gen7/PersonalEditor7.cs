@@ -64,11 +64,6 @@ public partial class PersonalEditor7 : Form
         entryNames = Main.Config.Personal.GetPersonalEntryList(altForms, species, Main.Config.MaxSpeciesID, out baseForms, out formVal);
         TMs = TMEditor7.GetTMHMList();
 
-        Setup();
-        LoadVanillaStats();
-        if (CB_Species.Items.Count > 1) CB_Species.SelectedIndex = 1;
-        RandSettings.GetFormSettings(this, TP_Randomizer.Controls);
-
         B_GenerateDiff.Click += (s, e) => GenerateFullChangelog();
         B_CopyPage1.Click += B_CopyPage1_Click;
         B_PastePage1.Click += B_PastePage1_Click;
@@ -105,10 +100,50 @@ public partial class PersonalEditor7 : Form
         CB_ZMove.SelectedIndexChanged += (s, e) => { if (!reading) SaveEntry(); };
         B_SaveCurrent.Click += (s, e) => { SaveEntry(); WinFormsUtil.Alert("Current Pokémon saved to internal buffer."); };
 
-        this.FormClosing += Form_Closing;
         RegisterAutosave(TP_General.Controls);
-        RegisterAutosave(TP_MoveTutors.Controls);
+        NUD_TutorBase = new NumericUpDown
+        {
+            Minimum = 0x28, Maximum = 0x2F, Hexadecimal = true, 
+            Value = 0x29, Location = new Point(370, 370), Size = new Size(50, 20),
+            Enabled = false // Locked — ASM patch expects base 0x29
+        };
+        L_TutorBase = new Label { Text = "Base:", Location = new Point(300, 373), Size = new Size(70, 20) };
+        B_AlignTutors = new Button { Text = "Align", Location = new Point(430, 368), Size = new Size(50, 24) };
+        L_ContinuousTutors = new CheckBox { Text = "Continuous Mapping (ASM)", Location = new Point(490, 370), Size = new Size(200, 20), Checked = true, Enabled = false };
+
+        TP_MoveTutors.Controls.Add(L_TutorBase);
+        TP_MoveTutors.Controls.Add(NUD_TutorBase);
+        TP_MoveTutors.Controls.Add(B_AlignTutors);
+        TP_MoveTutors.Controls.Add(L_ContinuousTutors);
+        B_AlignTutors.Click += B_AlignTutors_Click;
+        L_NewTutors.Visible = false;
+        L_Special.Visible = false; // Get rid of Special Tutors text
+        CLB_NewTutors.Visible = false;
+        CLB_BeachTutors.Location = new Point(300, 35);
+        CLB_BeachTutors.Width = 490;
+        CLB_BeachTutors.Height = 275;
+        CLB_BeachTutors.MultiColumn = true;
+        CLB_BeachTutors.ColumnWidth = 150;
+
+        L_DebugTutors = new RichTextBox 
+        { 
+            ReadOnly = true, 
+            BackColor = Color.Black, 
+            ForeColor = Color.Yellow, 
+            Font = new Font("Consolas", 8),
+            Location = new Point(300, 315), 
+            Size = new Size(490, 45),
+            BorderStyle = BorderStyle.None
+        };
+        TP_MoveTutors.Controls.Add(L_DebugTutors);
+
+        Setup();
+        LoadVanillaStats();
+        if (CB_Species.Items.Count > 1) CB_Species.SelectedIndex = 1;
+        RandSettings.GetFormSettings(this, TP_Randomizer.Controls);
     }
+
+
 
     private void RegisterAutosave(Control.ControlCollection controls)
     {
@@ -175,16 +210,28 @@ public partial class PersonalEditor7 : Form
     private string[] entryNames;
     private readonly ushort[] TMs;
     private int entry = -1;
+    private NumericUpDown NUD_TutorBase;
+    private Button B_AlignTutors;
+    private Label L_TutorBase;
+    private CheckBox L_ContinuousTutors;
+    private RichTextBox L_DebugTutors;
+    private int[] Tutors_Beach_Map;
     private static bool[] ClipboardTMs;
     private static bool[] ClipboardTutors;
     private static bool[] ClipboardBeachTutors;
     private readonly byte[][] originalFiles;
     #endregion
     private bool reading;
-    private int[] Tutors_Beach_Map; // Mapping from UI index to actual bit index
-    private int[] Tutors_New_Map;   // Mapping from New Tutors UI index to CRO bit index
+    private int tutorBase = 0x29;
     private void Setup()
     {
+        reading = true;
+        if (Main.Config.USUM)
+        {
+            tutorBase = 0x29;
+            NUD_TutorBase.Value = tutorBase;
+        }
+
         CLB_TM.Items.Clear();
         CB_Species.Items.Clear();
         CLB_MoveTutors.Items.Clear();
@@ -259,41 +306,55 @@ public partial class PersonalEditor7 : Form
         CB_EXPGroup.Items.AddRange(EXPGroups);
         CB_EXPGroup.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
         CB_EXPGroup.AutoCompleteSource = AutoCompleteSource.ListItems;
-
         if (Main.Config.USUM)
         {
             string croPath = Path.Combine(Main.RomFSPath, "Shop.cro");
             var tutorData = TutorEditor7.GetUSUMTutorData(croPath, Tutors_USUM);
             
-            // 1. Beach Tutors (Map UI items to their correct vanilla bits)
             CLB_BeachTutors.Items.Clear();
             List<int> beachMap = [];
+            bool unified = L_ContinuousTutors is CheckBox { Checked: true };
+            int baseOfs = (int)NUD_TutorBase.Value;
+            int startBit = (baseOfs - 0x28) * 32;
+
+            // 1. Add Special Tutors (Always Bits 0-7 / Word 28)
+            if (unified)
+            {
+                for (int i = 0; i < tutormoves.Length; i++)
+                {
+                    int moveID = tutormoves[i];
+                    string name = moveID < moves.Length ? moves[moveID] : $"Move {moveID}";
+                    CLB_BeachTutors.Items.Add($"+ [{moveID:000}] {name}");
+                    beachMap.Add(i); // Absolute bits 0-7
+                }
+            }
+
+            // 2. Add Vanilla Beach Tutors (Standard Mapping)
             for (int i = 0; i < Tutors_USUM.Length; i++)
             {
                 int moveID = Tutors_USUM[i];
-                CLB_BeachTutors.Items.Add($"[{moveID:000}] {(moveID < moves.Length ? moves[moveID] : $"Move {moveID}")}");
+                string name = moveID < moves.Length ? moves[moveID] : $"Move {moveID}";
+                CLB_BeachTutors.Items.Add($"[{moveID:000}] {name}");
                 
-                // Use the vanilla bit index if found, otherwise its slot in CRO
-                int bitIdx = Array.IndexOf(Tutors_USUM_Vanilla_Bits, moveID);
-                if (bitIdx == -1) bitIdx = Array.IndexOf(tutorData.moves, moveID);
-                beachMap.Add(bitIdx);
+                // Absolute bit calculation: startBit + i
+                beachMap.Add(startBit + i);
             }
-            Tutors_Beach_Map = beachMap.ToArray();
 
-            // 2. New Tutors (Moves in CRO not in the predefined Vanilla list)
-            CLB_NewTutors.Items.Clear();
-            List<int> newMap = [];
+            // 3. Add Expansion Moves (from Bits 67+ relative to startBit)
             var vanillaSet = new HashSet<int>(Tutors_USUM);
-            for (int i = 0; i < tutorData.moves.Length; i++)
+            var shopTutors = tutorData.moves;
+            int nextExpIndex = 67;
+            for (int i = 0; i < shopTutors.Length; i++)
             {
-                int moveID = tutorData.moves[i];
+                int moveID = shopTutors[i];
                 if (!vanillaSet.Contains(moveID))
                 {
-                    CLB_NewTutors.Items.Add($"[{moveID:000}] {(moveID < moves.Length ? moves[moveID] : $"Move {moveID}")}");
-                    newMap.Add(i);
+                    string name = moveID < moves.Length ? moves[moveID] : $"Move {moveID}";
+                    CLB_BeachTutors.Items.Add($"* [{moveID:000}] {name}");
+                    beachMap.Add(startBit + nextExpIndex++);
                 }
             }
-            Tutors_New_Map = newMap.ToArray();
+            Tutors_Beach_Map = beachMap.ToArray();
         }
 
         CLB_BeachTutors.ItemCheck += (s, e) => { if (!reading) BeginInvoke(new Action(() => SaveEntry(false))); };
@@ -304,7 +365,8 @@ public partial class PersonalEditor7 : Form
         // toggle usum content
         CHK_BeachTutors.Checked = CHK_BeachTutors.Visible =
             CLB_BeachTutors.Visible = CLB_BeachTutors.Enabled = L_BeachTutors.Visible = Main.Config.USUM;
-
+        
+        reading = false;
         if (entry > -1 && entry < CB_Species.Items.Count) CB_Species.SelectedIndex = entry;
     }
 
@@ -621,57 +683,51 @@ public partial class PersonalEditor7 : Form
         TB_Weight.Text = ((decimal)pkm.Weight / 10).ToString("000.0");
 
         for (int i = 0; i < CLB_TM.Items.Count && i < pkm.TMHM.Length; i++)
-            CLB_TM.SetItemChecked(i, pkm.TMHM[i]); 
+            CLB_TM.SetItemChecked(i, pkm.TMHM[i]);
 
-        for (int i = 0; i < CLB_MoveTutors.Items.Count && i < pkm.TypeTutors.Length; i++)
-            CLB_MoveTutors.SetItemChecked(i, pkm.TypeTutors[i]);
+        PersonalInfoSM sm = (PersonalInfoSM)pkm;
+        TB_CallRate.Text = sm.EscapeRate.ToString("000");
+        TB_CallRate.TextAlign = HorizontalAlignment.Center;
+        CB_ZItem.SelectedIndex = sm.SpecialZ_Item == 65535 || sm.SpecialZ_Item >= CB_ZItem.Items.Count ? 0 : sm.SpecialZ_Item;
+        CB_ZBaseMove.SelectedIndex = sm.SpecialZ_BaseMove == 65535 || sm.SpecialZ_BaseMove >= CB_ZBaseMove.Items.Count ? 0 : sm.SpecialZ_BaseMove;
+        CB_ZMove.SelectedIndex = sm.SpecialZ_ZMove == 65535 || sm.SpecialZ_ZMove >= CB_ZMove.Items.Count ? 0 : sm.SpecialZ_ZMove;
+        CHK_Variant.Checked = sm.LocalVariant;
 
-        if (Main.Config.SM || Main.Config.USUM)
-        {
-            PersonalInfoSM sm = (PersonalInfoSM)pkm;
-            TB_CallRate.Text = sm.EscapeRate.ToString("000");
-            TB_CallRate.TextAlign = HorizontalAlignment.Center;
-            CB_ZItem.SelectedIndex = sm.SpecialZ_Item == 65535 || sm.SpecialZ_Item >= CB_ZItem.Items.Count ? 0 : sm.SpecialZ_Item;
-            CB_ZBaseMove.SelectedIndex = sm.SpecialZ_BaseMove == 65535 || sm.SpecialZ_BaseMove >= CB_ZBaseMove.Items.Count ? 0 : sm.SpecialZ_BaseMove;
-            CB_ZMove.SelectedIndex = sm.SpecialZ_ZMove == 65535 || sm.SpecialZ_ZMove >= CB_ZMove.Items.Count ? 0 : sm.SpecialZ_ZMove;
-            CHK_Variant.Checked = sm.LocalVariant;
-        }
-        var special = pkm.SpecialTutors.SelectMany(b => b).ToArray();
+        CLB_MoveTutors.Visible = L_NewTutors.Visible = L_Special.Visible = !(L_ContinuousTutors is CheckBox { Checked: true });
+        for (int i = 0; i < CLB_MoveTutors.Items.Count && i < 32; i++)
+            CLB_MoveTutors.SetItemChecked(i, sm.TutorFlags[i]);
+
+        // Beach Tutors (Standard USUM Island-based mapping)
         for (int i = 0; i < CLB_BeachTutors.Items.Count; i++)
         {
-            int moveID = Tutors_USUM[i];
-            
-            // Check all vanilla bits that correspond to this move ID
-            bool isChecked = false;
-            for (int bitIdx = 0; bitIdx < Tutors_USUM_Vanilla_Bits.Length; bitIdx++)
-            {
-                if (Tutors_USUM_Vanilla_Bits[bitIdx] == moveID && bitIdx < special.Length)
-                {
-                    if (special[bitIdx]) { isChecked = true; break; }
-                }
-            }
-            
-            // If not found in vanilla, check the 'New Tutors' map/slots
-            if (!isChecked && Tutors_Beach_Map != null && i < Tutors_Beach_Map.Length)
-            {
-                int bitIdx = Tutors_Beach_Map[i];
-                if (bitIdx >= 67 && bitIdx < special.Length) isChecked = special[bitIdx];
-            }
-
-            CLB_BeachTutors.SetItemChecked(i, isChecked);
+            int bitPos = GetUSUMBitPos(i);
+            CLB_BeachTutors.SetItemChecked(i, bitPos >= 0 && bitPos < sm.TutorFlags.Length && sm.TutorFlags[bitPos]);
         }
-
-        if (Tutors_New_Map != null)
-        {
-            for (int i = 0; i < CLB_NewTutors.Items.Count && i < Tutors_New_Map.Length; i++)
-            {
-                int bitIdx = Tutors_New_Map[i];
-                if (bitIdx < special.Length) CLB_NewTutors.SetItemChecked(i, special[bitIdx]);
-            }
-        }
+        ReadDexEntry();
+        UpdateDebugLabel(sm);
         reading = false;
+    }
 
-        // Read Dex Entry
+    private void UpdateDebugLabel(PersonalInfoSM sm)
+    {
+        if (L_DebugTutors == null) return;
+        byte[] data = sm.Write();
+        byte[] tutorData = data.Skip(0x38).Take(20).ToArray();
+        string hex = "0x38:\n" + BitConverter.ToString(tutorData).Replace("-", " ");
+        L_DebugTutors.Text = hex;
+    }
+
+    private int GetUSUMBitPos(int index)
+    {
+        // Use the absolute map calculated during Setup()
+        if (Tutors_Beach_Map != null && index < Tutors_Beach_Map.Length)
+            return Tutors_Beach_Map[index];
+            
+        return -1;
+    }
+
+    private void ReadDexEntry()
+    {
         var dexBox = RTB_DexEntry;
         if (dexBox != null)
         {
@@ -691,6 +747,7 @@ public partial class PersonalEditor7 : Form
                 }
             }
         }
+        reading = false;
     }
 
     private void ReadEntry()
@@ -760,55 +817,53 @@ public partial class PersonalEditor7 : Form
         for (int i = 0; i < CLB_TM.Items.Count && i < pkm.TMHM.Length; i++)
             pkm.TMHM[i] = CLB_TM.GetItemChecked(i);
 
-        for (int t = 0; t < CLB_MoveTutors.Items.Count && t < pkm.TypeTutors.Length; t++)
-            pkm.TypeTutors[t] = CLB_MoveTutors.GetItemChecked(t);
+        PersonalInfoSM sm = (PersonalInfoSM)pkm;
+        for (int i = 0; i < CLB_MoveTutors.Items.Count && i < 32; i++)
+            sm.TutorFlags[i] = CLB_MoveTutors.GetItemChecked(i);
 
-        if (Main.Config.SM || Main.Config.USUM)
-        {
-            pkm.EscapeRate = Convert.ToByte(TB_CallRate.Text);
-            PersonalInfoSM sm = (PersonalInfoSM)pkm;
-            sm.SpecialZ_Item = CB_ZItem.SelectedIndex;
-            sm.SpecialZ_BaseMove = CB_ZBaseMove.SelectedIndex;
-            sm.SpecialZ_ZMove = CB_ZMove.SelectedIndex;
-            sm.LocalVariant = CHK_Variant.Checked;
-        }
-        var bits = pkm.SpecialTutors.SelectMany(b => b).ToArray();
         for (int i = 0; i < CLB_BeachTutors.Items.Count; i++)
         {
-            int moveID = Tutors_USUM[i];
-            bool isChecked = CLB_BeachTutors.GetItemChecked(i);
-
-            // Set ALL vanilla bits that correspond to this move ID
-            for (int bitIdx = 0; bitIdx < Tutors_USUM_Vanilla_Bits.Length; bitIdx++)
-            {
-                if (Tutors_USUM_Vanilla_Bits[bitIdx] == moveID && bitIdx < bits.Length)
-                {
-                    bits[bitIdx] = isChecked;
-                }
-            }
-
-            // Also set the specific bit from the CRO scan if it's a 'New' or shifted move
-            if (Tutors_Beach_Map != null && i < Tutors_Beach_Map.Length)
-            {
-                int bitIdx = Tutors_Beach_Map[i];
-                if (bitIdx >= 0 && bitIdx < bits.Length) bits[bitIdx] = isChecked;
-            }
+            int bitPos = GetUSUMBitPos(i);
+            if (bitPos < sm.TutorFlags.Length) sm.TutorFlags[bitPos] = CLB_BeachTutors.GetItemChecked(i);
         }
-
-        if (Tutors_New_Map != null)
-        {
-            for (int i = 0; i < CLB_NewTutors.Items.Count && i < Tutors_New_Map.Length; i++)
-            {
-                int bitIdx = Tutors_New_Map[i];
-                if (bitIdx < bits.Length) bits[bitIdx] = CLB_NewTutors.GetItemChecked(i);
-            }
-        }
-
-        for (int loc = 0; loc < 4; loc++)
-            pkm.SpecialTutors[loc] = bits.Skip(loc * 32).Take(32).ToArray();
+        UpdateDebugLabel(sm);
 
         // Log significant changes
         LogChange($"Saved changes for {CB_Species.Text}");
+    }
+
+    private void B_AlignTutors_Click(object sender, EventArgs e)
+    {
+        int newBase = (int)NUD_TutorBase.Value;
+        var dr = WinFormsUtil.Prompt(MessageBoxButtons.YesNoCancel, 
+            "Shift all Pokémon compatibility bits to align with the current Base?\n\n" +
+            "YES: Shift bits from 29 -> 28 (Corrects expansion mismatch)\n" +
+            "NO: Shift bits from 28 -> 29 (Reverts to vanilla display)\n" +
+            "CANCEL: Do nothing.");
+
+        if (dr == DialogResult.Cancel) return;
+        int shift = (dr == DialogResult.Yes) ? -32 : 32;
+
+        int count = 0;
+        for (int i = 0; i < files.Length && i < Main.SpeciesStat.Length; i++)
+        {
+            if (files[i] == null || files[i].Length < 0x50) continue;
+            var sm = new PersonalInfoSM(files[i]);
+            bool[] newBits = new bool[sm.TutorFlags.Length];
+            for (int b = 0; b < sm.TutorFlags.Length; b++)
+            {
+                int oldIdx = b - shift;
+                if (oldIdx >= 0 && oldIdx < sm.TutorFlags.Length)
+                    newBits[b] = sm.TutorFlags[oldIdx];
+            }
+            sm.TutorFlags = newBits;
+            files[i] = sm.Write();
+            Main.SpeciesStat[i] = sm;
+            count++;
+        }
+        tutorBase = newBase;
+        ReadInfo();
+        WinFormsUtil.Alert("Tutor bits shifted and cache refreshed.", $"Successfully aligned {count} Pokémon.");
     }
 
     private void LogChange(string text)

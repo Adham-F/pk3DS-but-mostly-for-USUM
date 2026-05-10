@@ -205,7 +205,6 @@ public static class ResearchEngine
             0x28, 0x00, 0xA0, 0xE3, // mov r0, 0x28
             0xE7, 0x2B, 0xFE, 0xEB, // bl #0x87b58
             0x04, 0x00, 0x2D, 0xE5, // push {r0}
-            // ... truncated for brevity, but I will include the full block from XLSX
             0x29, 0x00, 0xA0, 0xE3, 0xE4, 0x2B, 0xFE, 0xEB, 0x04, 0x00, 0x2D, 0xE5,
             0x2A, 0x00, 0xA0, 0xE3, 0xE1, 0x2B, 0xFE, 0xEB, 0x04, 0x00, 0x2D, 0xE5,
             0x2B, 0x00, 0xA0, 0xE3, 0xDE, 0x2B, 0xFE, 0xEB, 0x04, 0x00, 0x2D, 0xE5,
@@ -225,6 +224,190 @@ public static class ResearchEngine
 
         File.WriteAllBytes(battlePath, cro);
         return true;
+    }
+
+    public static int ApplyExpandedTutorCodePatch(string codePath, int[] moveIDs)
+    {
+        if (!File.Exists(codePath)) return 0;
+        byte[] code = File.ReadAllBytes(codePath);
+
+        // 1. Start with the vanilla 67 moves in their EXACT original order to preserve personal data bits
+        int[] vanillaMoves = {
+            450, 343, 162, 530, 324, 442, 402, 529, 340, 067, 441, 253, 009, 007, 008, 277,
+            335, 414, 492, 356, 393, 334, 387, 276, 527, 196, 401, 428, 406, 304, 231, 020,
+            173, 282, 235, 257, 272, 215, 366, 143, 220, 202, 409, 264, 351, 352, 380, 388,
+            180, 495, 270, 271, 478, 472, 283, 200, 278, 289, 446, 285, 477, 502, 432, 710,
+            707, 675, 673
+        };
+
+        List<int> finalMoves = new List<int>();
+        HashSet<int> inTable = new HashSet<int>();
+        for (int i = 0; i < vanillaMoves.Length; i++)
+        {
+            finalMoves.Add(vanillaMoves[i]);
+            inTable.Add(vanillaMoves[i]);
+        }
+
+        // Append new moves from moveIDs that aren't already in the vanilla table
+        foreach (int m in moveIDs)
+        {
+            if (m > 0 && m < 1000 && !inTable.Contains(m))
+            {
+                finalMoves.Add(m);
+                inTable.Add(m);
+            }
+        }
+
+        // 2. Write the final ordered table to free space
+        int required = finalMoves.Count * 2;
+        int tableOfs = FindFreeSpace(code, required, 0x550000); 
+        if (tableOfs == -1) return 0;
+
+        for (int i = 0; i < finalMoves.Count; i++)
+            BitConverter.GetBytes((ushort)finalMoves[i]).CopyTo(code, tableOfs + (i * 2));
+
+        int patchedCount = 0;
+        uint[] bases = { 0x100000, 0x000000 };
+
+        // 3. Find ALL instances of the Tutor Table pointer by pattern and repoint them
+        byte[] pattern = { 0xC2, 0x01, 0x57, 0x01, 0xA2, 0x00, 0x12, 0x02 }; 
+        List<int> tableBaseOffsets = new List<int>();
+        for (int i = 0; i < code.Length - 100; i += 2)
+        {
+            if (code[i] == pattern[0] && code[i+1] == pattern[1] && code[i+2] == pattern[2] && code[i+3] == pattern[3])
+                tableBaseOffsets.Add(i);
+        }
+
+        // Wait, if it's already patched by an OLD broken pk3DS version, the pointer might point to a scrambled table
+        // that doesn't have the pattern. We should find the actual pointer in the tutor function.
+        // For now, we restore the pattern pointer logic, but also check for already-patched pointers (0x00650000)
+        foreach (int tableBaseOfs in tableBaseOffsets)
+        {
+            List<int> currentTablePointers = new List<int>();
+            uint detectedBase = 0x100000;
+            foreach (uint b in bases)
+            {
+                uint oldTableAddr = (uint)(tableBaseOfs + b);
+                byte[] oldAddrBytes = BitConverter.GetBytes(oldTableAddr);
+                for (int k = 0; k < code.Length - 4; k += 4)
+                {
+                    if (code[k] == oldAddrBytes[0] && code[k+1] == oldAddrBytes[1] && code[k+2] == oldAddrBytes[2] && code[k+3] == oldAddrBytes[3])
+                    {
+                        currentTablePointers.Add(k);
+                        detectedBase = b;
+                    }
+                }
+                if (currentTablePointers.Count > 0) break;
+            }
+
+            if (currentTablePointers.Count == 0) continue;
+
+            byte[] newAddrBytes = BitConverter.GetBytes((uint)(tableOfs + detectedBase));
+            foreach (int ptrOfs in currentTablePointers)
+            {
+                newAddrBytes.CopyTo(code, ptrOfs);
+                patchedCount++;
+            }
+        }
+
+        // 3. Tutor Expansion Patches — locate the tutor function via MOV R?, #0x29
+        // We keep the base at 0x29 to preserve vanilla personal data bit positions.
+        // With params 0x29-0x2C = 4 words = 128 tutor slots.
+        uint newLimit = (uint)Math.Min(128, finalMoves.Count);
+        const uint MOV_MASK = 0xFFF000FF;
+        const uint MOV_0x29 = 0xE3A00029;
+
+        for (int i = 0; i < code.Length - 4; i += 4)
+        {
+            uint w = BitConverter.ToUInt32(code, i);
+            if ((w & MOV_MASK) != MOV_0x29)
+                continue;
+
+            // Verify this is the tutor function by checking for ADD R0, R0, R1, ASR #5 at i+4
+            if (i + 4 >= code.Length) continue;
+            uint nextW = BitConverter.ToUInt32(code, i + 4);
+            if (nextW != 0xE08002C1) // ADD R0, R0, R1, ASR #5
+                continue;
+
+            // MOV base stays at 0x29 — no change needed
+            patchedCount++;
+
+            // === PATCH 1: Loop limit CMP (search backwards) ===
+            int searchStart = Math.Max(0, i - 0x100);
+            for (int j = i; j >= searchStart; j -= 4)
+            {
+                uint w2 = BitConverter.ToUInt32(code, j);
+                if ((w2 & 0xFFF00000) == 0xE3500000) // CMP R0, #Imm
+                {
+                    uint currentLimit = w2 & 0xFF;
+                    if (currentLimit != newLimit)
+                    {
+                        uint patchedW = (w2 & 0xFFFFFF00) | newLimit;
+                        BitConverter.GetBytes(patchedW).CopyTo(code, j);
+                    }
+                    patchedCount++;
+                    break;
+                }
+            }
+
+            // === PATCH 2: Param range CMP 0x2B → 0x2C (search forwards) ===
+            for (int j = i + 8; j < Math.Min(code.Length - 4, i + 0x40); j += 4)
+            {
+                uint w3 = BitConverter.ToUInt32(code, j);
+                // Match CMP R4, #0x2B or CMP R4, #0x2C (already patched)
+                if ((w3 & 0xFFFFF000) == 0xE3540000)
+                {
+                    uint currentRange = w3 & 0xFF;
+                    if (currentRange < 0x2C)
+                    {
+                        uint patchedW = (w3 & 0xFFFFFF00) | 0x2C;
+                        BitConverter.GetBytes(patchedW).CopyTo(code, j);
+                    }
+                    patchedCount++;
+                    break;
+                }
+            }
+
+            break; // Only one tutor function to patch
+        }
+
+        // === PATCH 4: Switch case 0x2C — change LDRB to LDR word at offset 0x48 ===
+        // Find by searching for the exact vanilla instruction: LDRB R0, [R0, #0x1B] = E5D0001B
+        // This is in the GetPersonalData switch case for param 0x2C
+        // We also accept already-patched value: LDR R0, [R0, #0x48] = E5900048
+        const uint VANILLA_CASE_2C = 0xE5D0001B;
+        const uint PATCHED_CASE_2C = 0xE5900048;
+
+        // The switch case is preceded by LDR R0, [R0, #8] = E5900008
+        for (int i = 0; i < code.Length - 8; i += 4)
+        {
+            uint w = BitConverter.ToUInt32(code, i);
+            if (w != 0xE5900008) continue; // LDR R0, [R0, #8] preamble
+
+            uint w2 = BitConverter.ToUInt32(code, i + 4);
+            if (w2 == VANILLA_CASE_2C)
+            {
+                // Verify context: next instruction should be POP {R4, PC} = E8BD8010
+                if (i + 8 < code.Length && BitConverter.ToUInt32(code, i + 8) == 0xE8BD8010)
+                {
+                    BitConverter.GetBytes(PATCHED_CASE_2C).CopyTo(code, i + 4);
+                    patchedCount++;
+                    break;
+                }
+            }
+            else if (w2 == PATCHED_CASE_2C)
+            {
+                patchedCount++; // Already patched
+                break;
+            }
+        }
+        
+        if (patchedCount > 0)
+        {
+            File.WriteAllBytes(codePath, code);
+            return patchedCount;
+        }
+        return 0;
     }
 
     public static bool ApplyGen8AbilityPatch(string battlePath)
@@ -985,6 +1168,200 @@ public static class ResearchEngine
         }
 
         return allSuccess;
+    }
+
+    public static ushort[] GetTMItemArray(byte[] code, int count, ushort[] defaultItems)
+    {
+        byte[] customSig = [0x10, 0x40, 0x2D, 0xE9, 0x00, 0x00, 0x50, 0xE3, 0x08, 0x40, 0x9F, 0x35];
+        byte[] mask = [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        
+        int customOfs = IndexOfBytesMasked(code, customSig, mask, 0x100000);
+        if (customOfs >= 0)
+        {
+            uint ptr = BitConverter.ToUInt32(code, customOfs + 28);
+            int fileOfs = (int)(ptr - 0x100000);
+            if (fileOfs > 0 && fileOfs + count * 2 <= code.Length)
+            {
+                ushort[] readItems = new ushort[count];
+                for (int i = 0; i < count; i++)
+                    readItems[i] = BitConverter.ToUInt16(code, fileOfs + i * 2);
+                return readItems;
+            }
+        }
+        
+        if (code.Length > 0x4BB794 + count * 2)
+        {
+            ushort[] readItems = new ushort[count];
+            for (int i = 0; i < count; i++)
+                readItems[i] = BitConverter.ToUInt16(code, 0x4BB794 + i * 2);
+            return readItems;
+        }
+
+        return defaultItems;
+    }
+
+    public static void ApplyExpandedTMCodePatch(byte[] code, ushort[] moves, ushort[] items)
+    {
+        if (moves.Length <= 100)
+        {
+            int moveVanilla = 0x4BB98E;
+            int itemVanilla = 0x4BB794;
+            for(int i = 0; i < moves.Length; i++) {
+                BitConverter.GetBytes(moves[i]).CopyTo(code, moveVanilla + i * 2);
+                BitConverter.GetBytes(items[i]).CopyTo(code, itemVanilla + i * 2);
+            }
+            return;
+        }
+
+        int itemTableRAM = 0;
+        int moveTableRAM = 0;
+
+        byte[] customSig = [0x10, 0x40, 0x2D, 0xE9, 0x00, 0x00, 0x50, 0xE3, 0x08, 0x40, 0x9F, 0x35];
+        byte[] mask = [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+
+        int customOfs = IndexOfBytesMasked(code, customSig, mask, 0x100000);
+        if (customOfs > 0)
+        {
+            uint ptrItem = BitConverter.ToUInt32(code, customOfs + 28);
+            itemTableRAM = (int)ptrItem;
+            int secondCustomOfs = IndexOfBytesMasked(code, customSig, mask, customOfs + 4);
+            if (secondCustomOfs > 0)
+            {
+                uint ptrMove = BitConverter.ToUInt32(code, secondCustomOfs + 28);
+                moveTableRAM = (int)ptrMove;
+            }
+        }
+
+        int itemTable, moveTable;
+        if (itemTableRAM > 0x100000 && moveTableRAM > 0x100000)
+        {
+            itemTable = itemTableRAM - 0x100000;
+            moveTable = moveTableRAM - 0x100000;
+            if (itemTable > moveTable)
+            {
+                int temp = itemTable; itemTable = moveTable; moveTable = temp;
+                int tempR = itemTableRAM; itemTableRAM = moveTableRAM; moveTableRAM = tempR;
+            }
+        }
+        else
+        {
+            int tableBytes = moves.Length * 2;
+            int spaceNeeded = tableBytes * 2;
+            int freeSpace = FindFreeSpace(code, 0x550000, spaceNeeded);
+            if (freeSpace < 0) return;
+
+            itemTable = freeSpace;
+            moveTable = freeSpace + tableBytes;
+            itemTableRAM = itemTable + 0x100000;
+            moveTableRAM = moveTable + 0x100000;
+        }
+
+        for (int i = 0; i < moves.Length; i++)
+        {
+            BitConverter.GetBytes(items[i]).CopyTo(code, itemTable + i * 2);
+            BitConverter.GetBytes(moves[i]).CopyTo(code, moveTable + i * 2);
+        }
+
+        uint countHex = (uint)moves.Length;
+        uint cmpLim = 0xE3500000 | countHex;
+        
+        byte[] orderToMoveAssm = [
+            0x10, 0x40, 0x2D, 0xE9,
+            (byte)(cmpLim & 0xFF), (byte)((cmpLim >> 8) & 0xFF), (byte)((cmpLim >> 16) & 0xFF), (byte)((cmpLim >> 24) & 0xFF),
+            0x08, 0x40, 0x9F, 0x35,
+            0x00, 0x00, 0xA0, 0x23,
+            0x80, 0x00, 0xA0, 0x31,
+            0xB0, 0x00, 0x94, 0x31,
+            0x10, 0x80, 0xBD, 0xE8,
+            (byte)(moveTableRAM & 0xFF), (byte)((moveTableRAM >> 8) & 0xFF), (byte)((moveTableRAM >> 16) & 0xFF), (byte)((moveTableRAM >> 24) & 0xFF)
+        ];
+        
+        byte[] orderToItemAssm = (byte[])orderToMoveAssm.Clone();
+        BitConverter.GetBytes(itemTableRAM).CopyTo(orderToItemAssm, 28);
+
+        uint movLim = 0xE3A06000 | countHex;
+        byte[] itemToMoveAssm = [
+            0x70, 0x40, 0x2D, 0xE9,
+            0x24, 0x40, 0x9F, 0xE5,
+            0x24, 0x50, 0x9F, 0xE5,
+            0x00, 0x10, 0xA0, 0xE3,
+            (byte)(movLim & 0xFF), (byte)((movLim >> 8) & 0xFF), (byte)((movLim >> 16) & 0xFF), (byte)((movLim >> 24) & 0xFF),
+            0xB1, 0x20, 0x54, 0xE1,
+            0x00, 0x00, 0x52, 0xE1,
+            0x03, 0x00, 0x00, 0x0A,
+            0x01, 0x10, 0x81, 0xE2,
+            0x06, 0x00, 0x51, 0xE1,
+            0xFA, 0xFF, 0xFF, 0x3A,
+            0x00, 0x00, 0xA0, 0xE3,
+            0x70, 0x80, 0xBD, 0xE8,
+            0xB1, 0x00, 0x55, 0xE1,
+            0x70, 0x80, 0xBD, 0xE8,
+            (byte)(itemTableRAM & 0xFF), (byte)((itemTableRAM >> 8) & 0xFF), (byte)((itemTableRAM >> 16) & 0xFF), (byte)((itemTableRAM >> 24) & 0xFF),
+            (byte)(moveTableRAM & 0xFF), (byte)((moveTableRAM >> 8) & 0xFF), (byte)((moveTableRAM >> 16) & 0xFF), (byte)((moveTableRAM >> 24) & 0xFF)
+        ];
+
+        byte[] orderSig = [0x10, 0x40, 0x2D, 0xE9, 0x6B, 0x00, 0x50, 0xE3, 0x00, 0x40, 0xA0, 0xE1];
+        int firstOrderOfs = Util.IndexOfBytes(code, orderSig, 0x100000, 0);
+        if (firstOrderOfs > 0)
+        {
+            int secondOrderOfs = Util.IndexOfBytes(code, orderSig, firstOrderOfs + 4, 0);
+            if (secondOrderOfs > 0)
+            {
+                uint ptr1 = BitConverter.ToUInt32(code, firstOrderOfs + 0x44);
+                uint ptr2 = BitConverter.ToUInt32(code, secondOrderOfs + 0x44);
+                int orderMoveOfs = ptr1 > ptr2 ? firstOrderOfs : secondOrderOfs;
+                int orderItemOfs = ptr1 < ptr2 ? firstOrderOfs : secondOrderOfs;
+                orderToMoveAssm.CopyTo(code, orderMoveOfs);
+                orderToItemAssm.CopyTo(code, orderItemOfs);
+            }
+        }
+        else 
+        {
+            int firstCustomOfs = IndexOfBytesMasked(code, customSig, mask, 0x100000);
+            if (firstCustomOfs > 0)
+            {
+                int secondCustomOfs = IndexOfBytesMasked(code, customSig, mask, firstCustomOfs + 4);
+                if (secondCustomOfs > 0)
+                {
+                    uint ptr1 = BitConverter.ToUInt32(code, firstCustomOfs + 28);
+                    uint ptr2 = BitConverter.ToUInt32(code, secondCustomOfs + 28);
+                    int orderMoveOfs = ptr1 > ptr2 ? firstCustomOfs : secondCustomOfs;
+                    int orderItemOfs = ptr1 < ptr2 ? firstCustomOfs : secondCustomOfs;
+                    orderToMoveAssm.CopyTo(code, orderMoveOfs);
+                    orderToItemAssm.CopyTo(code, orderItemOfs);
+                }
+            }
+        }
+
+        byte[] itemToMoveSig = [0x04, 0x40, 0x2D, 0xE5, 0xAC, 0x40, 0x9F, 0xE5, 0xAC, 0x20, 0x9F, 0xE5];
+        int itemToMoveOfs = Util.IndexOfBytes(code, itemToMoveSig, 0x100000, 0);
+        if (itemToMoveOfs > 0)
+        {
+            itemToMoveAssm.CopyTo(code, itemToMoveOfs);
+        }
+        else
+        {
+            byte[] customItemToMoveSig = [0x70, 0x40, 0x2D, 0xE9, 0x24, 0x40, 0x9F, 0xE5, 0x24, 0x50, 0x9F, 0xE5];
+            int customOfs2 = Util.IndexOfBytes(code, customItemToMoveSig, 0x100000, 0);
+            if (customOfs2 > 0)
+            {
+                itemToMoveAssm.CopyTo(code, customOfs2);
+            }
+        }
+    }
+
+    private static int IndexOfBytesMasked(byte[] data, byte[] pattern, byte[] mask, int start)
+    {
+        for (int i = start; i < data.Length - pattern.Length; i += 4)
+        {
+            bool match = true;
+            for (int j = 0; j < pattern.Length; j++)
+            {
+                if (mask[j] == 0xFF && data[i + j] != pattern[j]) { match = false; break; }
+            }
+            if (match) return i;
+        }
+        return -1;
     }
 
     /// <summary>

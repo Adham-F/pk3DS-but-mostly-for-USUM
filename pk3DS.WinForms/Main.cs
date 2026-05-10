@@ -1329,11 +1329,17 @@ namespace pk3DS.WinForms;
             }
 
             // Set Master Table back (Safely resize if needed)
-            if (d.Length > 1)
+            if (d.Length > 1 && Config.Generation == 7)
             {
                 int len = d[0].Length;
+                // If the last entry is still a Pokemon entry, we need to append a new slot for the Master Table
+                if (d[^1].Length == len)
+                {
+                    Array.Resize(ref d, d.Length + 1);
+                }
+
                 int tableSize = (d.Length - 1) * len;
-                if (d[^1].Length != tableSize)
+                if (d[^1] == null || d[^1].Length != tableSize)
                 {
                     d[^1] = new byte[tableSize];
                 }

@@ -43,6 +43,11 @@ public partial class PersonalEditor7 : Form
         ev_boxes = [TB_HPEVs, TB_ATKEVs, TB_DEFEVs, TB_SPEEVs, TB_SPAEVs, TB_SPDEVs];
         rstat_boxes = [CHK_rHP, CHK_rATK, CHK_rDEF, CHK_rSPA, CHK_rSPD, CHK_rSPE];
         files = (byte[][])infiles.Clone();
+        if (Main.Config.Generation == 7 && files.Length > 0)
+        {
+            // Strip the Master Table (last file) so 'files' only contains Pokemon data
+            Array.Resize(ref files, files.Length - 1);
+        }
         originalFiles = files.Select(a => (byte[])a.Clone()).ToArray(); // Snapshots YOUR custom ROM data
         
         foreach (var tb in byte_boxes) tb.TextAlign = HorizontalAlignment.Center;
@@ -397,7 +402,11 @@ public partial class PersonalEditor7 : Form
         try
         {
             // Save Personal GARC (with reconstructed Master Table)
-            byte[][] personalWithTable = [.. files, RebuildMasterTable(files)];
+            byte[] masterTable = RebuildMasterTable(files);
+            byte[][] personalWithTable = new byte[files.Length + 1][];
+            for (int i = 0; i < files.Length; i++) personalWithTable[i] = files[i];
+            personalWithTable[files.Length] = masterTable;
+            
             Main.Config.GARCPersonal.Files = personalWithTable;
             Main.Config.GARCPersonal.Save();
 

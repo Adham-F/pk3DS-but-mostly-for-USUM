@@ -328,10 +328,17 @@ public partial class FormInsertion : Form
         }
         
         int model_source_flag_offset = 2 * model_source_index + start_of_byte_flag_table;
+        if (model_source_flag_offset + 1 >= headerList.Count)
+        {
+            // Template model index is invalid or out of bounds for bitflags
+            return;
+        }
         byte flag_0 = headerList[model_source_flag_offset];
         byte flag_1 = headerList[model_source_flag_offset + 1];
 
         int target_bitflag_offset = 2 * total_previous_models + start_of_byte_flag_table;
+        if (target_bitflag_offset > headerList.Count) target_bitflag_offset = headerList.Count;
+
         for (int i = 0; i < addedCount; i++)
         {
             headerList.Insert(target_bitflag_offset, flag_1); // Insert reversed to push correctly

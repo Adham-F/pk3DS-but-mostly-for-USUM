@@ -49,7 +49,7 @@ Here are the newer features present in this specific fork of pk3DS:
 - "Copy Set" and "Paste Set" buttons that allow you to copy and paste the entire first tab of personal data from one Pokemon to another; this is convinient when you want to add new forms to the game.
 - "Set Catch" and "Set Hatch" functions to make Pokemon always be caught instantly (255) for the former, and for making it hatch instantly for the latter (0).
 - "Jump to Level Up" and "Jump to Egg Moves" buttons for ease of editing movepools.
-- The Form Insertion Tool has been added into the tab as well, but its function is not completely set in stone yet, as it may need some adjustments to make it fully functional. 
+- The Form Insertion Tool has been added into the tab as well, it will work as it tells you in the program. 
 - Pokedex Entries are readable at the bottom left of the Pokemon that you choose to edit!
 
 # Level Up Moves and Egg Moves
@@ -100,19 +100,21 @@ Here are the newer features present in this specific fork of pk3DS:
 - An Update Description button has been added to update the description of a TM that has the move it teaches changed.
 - An Export / Import .txt option if you want to edit in a .txt file instead.
 - If you expanded the amount of TMs to 128, it can now edit them! But you must have the patch for it applied to your game's files in order for it to work.
+- You can edit the item ID of your TMs, this is useful for adding new ones. However, do note that **adding them through the editor as of right now does not work.** Use the Research Center to do so.
 
 # Type Chart
 - Has sprites of types shown across the column and row of the chart, with numberical representations of interactions as well.
 
 # Poke Mart and Move Tutor
-- Both of these are lumped together as they both had the same function added to them; an Add and Delete button. However, do not be fooled and think that they will work immediately. The respective .cro files for each will have to be adjusted in order for that to work.
+- Both of these are lumped together as they both had the same function added to them; an Add and Delete button.
 - The Move Tutor bug that was present in the old pk3DS does not exist anymore, meaning that if you change a tutorable move into a new move, it will work!
+- Adding new items to Marts and new moves to tutor tables now function completely!
 
 # CRO Expander
 - An Expander for .cro files; this is only for if you want to do more advanced hacking of your game. For more information, please join the [3DS Hacking Discord](https://discord.gg/UzNWRRFdRC)!
 
 # Research Center
-- A massive work-in-progress, which if completely properly can have a lot of positive ramifications for USUM hacking. Stay tuned, and just admire from a distance!
+- Pretty much the holy grail of this version of pk3DS. You can expand Moves, Abilities, and Items, add new functions to your code.bin, battle.cro, shop.cro, etc., and do whatever you want as long as you have the necessary instructions to patch. For more information, please join the [3DS Hacking Discord](https://discord.gg/UzNWRRFdRC)!
 
 ## Installation
 
